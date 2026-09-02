@@ -36,6 +36,10 @@ The project uses the publicly available **French Motor Third-Party Liability (fr
 
 Both datasets are merged using the policy identifier (`IDpol`).
 
+The severity data is provided under data/freMTPL2sev.csv 
+The frequency data exceeds upload limit of 25 MB. A link to the `freMTPL2freq.csv` file will
+be given in the future.
+
 ## Project Structure
 
 ```text id="bjlnsj"
