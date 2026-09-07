@@ -24,10 +24,13 @@ The project follows the common actuarial separation into **Frequency** (how ofte
 * Python
 * Pandas
 * NumPy
+* SciPy
 * SQLite
 * Statsmodels
 * Matplotlib
+* Seaborn
 * VS Code
+
 
 ## Dataset
 
