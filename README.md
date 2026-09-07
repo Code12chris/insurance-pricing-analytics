@@ -34,7 +34,10 @@ The project follows the common actuarial separation into **Frequency** (how ofte
 The project uses the publicly available **French Motor Third-Party Liability (freMTPL2)** dataset.
 
 * `freMTPL2freq.csv` – policy information, exposure, and claim counts.
+* `freMTPL2freq.csv` – with 678013 rows and 12 columns
 * `freMTPL2sev.csv` – individual claim amounts.
+* `freMTPL2sev.csv` – with 26639 rows and 2 columns
+
 
 Both datasets are merged using the policy identifier (`IDpol`).
 
