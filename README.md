@@ -41,6 +41,7 @@ Both datasets are merged using the policy identifier (`IDpol`).
 
 ## Project Structure
 
+```text
 insurance-pricing-analytics/
 │
 ├── main.py              # Complete analysis workflow
@@ -49,7 +50,7 @@ insurance-pricing-analytics/
 ├── freMTPL2freq.csv     # Policy and frequency dataset
 ├── freMTPL2sev.csv      # Claim severity dataset
 └── README.md
-
+```
 
 
 ## Frequency Modeling
@@ -131,12 +132,14 @@ Observed and predicted mean claim severities are compared across:
 
 ### Validation Results
 
+```text
    Metric                        Result
 
    WMRAE (Age Groups)	         1.13%
    WMRAE (Bonus-Malus Groups)	   3.06%
    Deviance	                     1.65
    Pearson Chi²                  46.9   
+```
 
 The Gamma GLM shows very good calibration for the average claim severity across tariff groups, while Pearson dispersion indicates remaining heavy-tail variability that is not fully explained by the Gamma distribution.
 
@@ -147,18 +150,21 @@ Severity rating factors are obtained by exponentiating the Gamma GLM coefficient
 
 # Age Groups
 
+```text
    Age Group            Relative Severity
 
    18-25                1.000
    26-40                0.474
    41-60                0.408
    61+                  0.513
+```
 
 The youngest driver group is estimated to have the highest expected claim severity.
 
 
 # Bonus-Malus Groups
 
+```text
    Bonus-Malus Group            Relative Severity
 
    <=50                         1.000
@@ -167,6 +173,7 @@ The youngest driver group is estimated to have the highest expected claim severi
    81-100                       1.243
    101-125                      0.758
    >125                         1.091
+```
 
 Bonus-Malus effects are included for comparison but are not statistically significant in the selected Gamma severity model.
 
@@ -220,7 +227,8 @@ Python 3.8.5 or higher is required.
 
 1. Clone the repository:
 
-   git clone https://github.com/Code12chris/insurance-pricing-analytics.git 
+   git clone https://github.com/Code12chris/insurance-pricing-analytics.git
+
    cd insurance-pricing-analytics
 
 
@@ -243,3 +251,4 @@ Python 3.8.5 or higher is required.
 - The SQLite database (insurance.db) is created automatically on first run.
 - All relevant plots are exported as a PDF file.
 - No additional configuration required.
+
