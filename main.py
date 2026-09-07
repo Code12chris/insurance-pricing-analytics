@@ -16,7 +16,7 @@ import textwrap
 plt.ioff()
 
 #PDF-Datei initialisieren, für Abspeichern mehrerer Plots
-pdf_pages = PdfPages('meine_plots.pdf')
+pdf_pages = PdfPages('analyse_plots.pdf')
 
 
 
@@ -172,12 +172,12 @@ comparison['difference'] = comparison['observed'] - comparison['poisson']
 fig1, axes1 = plt.subplots(1, 2, figsize=(12,4))
 
 # Linker plot - gesamtansicht
-axes1[0].scatter(k, comparison['observed'], s=60, label='Beobachtet')
-axes1[0].plot(k, comparison['poisson'], linestyle='--', color='red', label='Poisson')
+axes1[0].scatter(k, comparison['observed'], s=60, label='observed')
+axes1[0].plot(k, comparison['poisson'], linestyle='--', color='red', label='poisson')
 
-axes1[0].set_title('Gesamtansicht')
-axes1[0].set_xlabel('Anzahl Schäden')
-axes1[0].set_ylabel('Wahrscheinlichkeit')
+axes1[0].set_title('complete overview')
+axes1[0].set_xlabel('number of claims(bins)')
+axes1[0].set_ylabel('probability')
 axes1[0].set_xticks(k)
 axes1[0].grid(alpha=0.3)
 axes1[0].legend()
@@ -186,15 +186,15 @@ axes1[0].legend()
 axes1[1].scatter(k, comparison['observed'], s=60, label='Beobachtet')
 axes1[1].plot(k, comparison['poisson'], linestyle='--', color='red', label='Poisson')
 
-axes1[1].set_title('Zoom auf seltene Schäden')
-axes1[1].set_xlabel('Anzahl Schäden')
-axes1[1].set_ylabel('Wahrscheinlichkeit')
+axes1[1].set_title('zoom on rare damage events')
+axes1[1].set_xlabel('number of claims(bins)')
+axes1[1].set_ylabel('probability')
 axes1[1].set_xticks(k)
-axes1[1].set_ylim(0, 0.06)
+axes1[1].set_ylim(0, 0.055)
 axes1[1].grid(alpha=0.3)
 
 
-plt.suptitle('Beobachtete vs. theoretische Poisson-Verteilung', fontsize=14)
+plt.suptitle('comparison: empirical data vs. poisson distribution', fontsize=14)
 plt.tight_layout()
 pdf_pages.savefig(fig1)
 plt.close(fig1)
@@ -386,9 +386,9 @@ heatmap_data = ( glm_data .assign(pred_freq = poisson_model.predict(glm_data) /
 fig2 = plt.figure(figsize=(8,4))
 sns.heatmap( heatmap_data, annot=True, fmt='.3f', cmap='YlOrRd' )
 
-plt.title('Erwartete Schadenfrequenz aus dem Poisson-GLM')
-plt.xlabel('BonusMalus-Gruppe')
-plt.ylabel('Altersgruppe')
+plt.title('expected claims frequency from Poisson-GLM')
+plt.xlabel('BonusMalus_group')
+plt.ylabel('age_group')
 pdf_pages.savefig(fig2)
 plt.close(fig2)
 
@@ -433,9 +433,9 @@ log_claims = np.log10(claims['ClaimAmount'])
 fig3 = plt.figure(figsize=(8, 4))
 
 plt.hist(log_claims, bins=60)
-plt.title('Verteilung der Schadenhöhen auf logarithmischer Skala')
-plt.xlabel('log10(Schadenhöhe in €)')
-plt.ylabel('Anzahl Schäden')
+plt.title('distribution claim amount on logarithmic scale')
+plt.xlabel('log10(claim amount in €)')
+plt.ylabel('number of claims')
 plt.tight_layout()
 pdf_pages.savefig(fig3)
 plt.close(fig3)
@@ -624,8 +624,8 @@ fig4, ax4 = plt.subplots(figsize=(8,4))
 growth[["75_vs_50", "90_vs_75", "95_vs_90", 
         "99_vs_95"]].plot( kind="bar", ax=ax4 )
 
-plt.ylabel("Relativer Zuwachs")
-plt.title("Tail-Wachstum der Schadenhöhe nach Altersgruppe")
+plt.ylabel("relative growth")
+plt.title("tail growth of claim amount sorted after age_group")
 plt.xticks(rotation=0)
 plt.tight_layout()
 pdf_pages.savefig(fig4)
@@ -849,9 +849,9 @@ print()
 resid = gamma_model.resid_deviance
 fig5 = plt.figure(figsize=(8, 5))
 plt.hist(resid, bins=100)
-plt.xlabel("Deviance Residuen")
-plt.ylabel("Anzahl")
-plt.title("Deviance-Residuen des Gamma-GLM")
+plt.xlabel("deviance residuals")
+plt.ylabel("count")
+plt.title("deviance residuals of gamma-GLM")
 pdf_pages.savefig(fig5)
 plt.close(fig5)
 
@@ -862,9 +862,9 @@ plt.scatter(
     gamma_model.resid_deviance,
     alpha=0.2
 )
-plt.xlabel("Vorhergesagte Schadenhöhe")
-plt.ylabel("Deviance Residuen")
-plt.title("Deviance-Residuen vs. vorhergesagte Severity")
+plt.xlabel("predicted claim amount")
+plt.ylabel("deviance residuals")
+plt.title("deviance residuals vs. predicted severity")
 plt.axhline(0, linestyle="--")
 pdf_pages.savefig(fig6)
 plt.close(fig6)
@@ -898,6 +898,17 @@ lognormal_model = smf.ols(
 
 print(lognormal_model.summary())
 
+"""
+Beobachtung: 
+
+Referenzgruppe bei BM war <= 50 und im Vergleich dazu waren die anderen
+BM-Klassen durch geringe p-Werte statist. signifikant. Ob dieses 'gute'
+Abbilden des Merkmals nachher auch die Schadenhöhen im Vergleich zum 
+Gamma-GLM gut abschätzt muss später geprüft werden.
+"""
+
+
+
 #-----------------------------------------------------------------------------------
 #Tabelle der Faktoren aus Log-Modell zur besseren Überischt zusammengefasst
 
@@ -913,8 +924,8 @@ print(coef_table.round(3))
 print()
 
 
-#Konfidenzintervalle der Severity-Faktoren durch Unsicherheiten des
-#Modells, daher Intervalle geeigneter
+#Konfidenzintervalle der Severity-Faktoren aus Modell bestimmt,
+#damit bessere Interpretation mgl
 
 conf = lognormal_model.conf_int()
 conf.columns = ["Lower", "Upper"]
@@ -927,6 +938,468 @@ severity_effects = pd.DataFrame({
 
 print(severity_effects.round(3))
 print()
+
+#----------------------------------------------------------------------------------
+"""
+In den nächsten Schritten word geprüft, wie sehr das Lognormal-Modell 
+die beobachteten Werte approx. und ob es damit ein besseres Modell 
+darstellt.
+
+Es soll im Vgl. zum Gamma-GLM die Abweichungen geringer halten und die
+Effekte der Extremschäden zumindest teilweise erfassen. 
+"""
+
+# Vorhergesagte Werte auf der Log-Skala
+severity["log_pred"] = lognormal_model.fittedvalues
+
+# Residuen
+severity["log_resid"] = lognormal_model.resid
+
+print(severity[["log_claim", "log_pred", "log_resid"]].head())
+print()
+
+print(severity["log_resid"].describe())
+
+
+#Plot zur Visualierung Residuen gegen vorhergesagte Werte
+fig7=plt.figure(figsize=(8, 5))
+plt.scatter(
+    severity["log_pred"],
+    severity["log_resid"],
+    alpha=0.2,
+    s=10)
+plt.axhline(0, linestyle="--")
+plt.xlabel("predicted log(claim amount)")
+plt.ylabel("residuals")
+plt.title("residuals vs. predicted values – lognormal-model")
+pdf_pages.savefig(fig7)
+plt.close()
+
+
+"""
+Beobachtung: Es gibt keinen erkennbaren Trend bspw Trichterform, die
+ein systematisches Verhalten der Residuen erkennen lassen. Momentan gibt
+es keinen Grund, dass das Modell besonders unpassend die Werte vorhersagt.
+Es wird aber auch nicht eine große Güte bestätigt.
+"""
+
+#----------------------------------------------------------------------------------
+
+#Histogramm der Residuen erstellen
+#Kann von Glockenkurve abweichen, sollte aber annährend 
+#getroffen werden
+
+fig8=plt.figure(figsize=(8, 5))
+plt.hist(
+    severity["log_resid"],
+    bins=60)
+plt.xlabel("residuals")
+plt.ylabel("frequency")
+plt.title("distribution of residuals – lognormal-model")
+pdf_pages.savefig(fig8)
+plt.close()
+
+"""
+Wieder eine annährende Normalverteilung, aber starke Häufung bei
+0.5, vermutlich durch Bündelung von Kategorien wie Alter+BM-Klassen
+"""
+
+
+#----------------------------------------------------------------------------------
+
+"""
+Hier kommt der Q-Q-Plot(quantile-quantile-plot) zum Prüfen der 
+Normalverteilung der Residuen, idealerweise sollten die Punkte 
+ungefähr auf einer Diagonalen liegen. 
+
+Der extreme rechte Tail könnte für Ausreißer sorgen an den Rändern
+des Q-Q-Plots.
+"""
+
+
+#print(severity["log_resid"].isna().sum())
+#print(np.isinf(severity["log_resid"]).sum())
+#Es gibt 195 NaN-Werte die vom Modell ausgeschlossen wurden,
+#aber im DataFrame noch enthalten sind
+
+
+
+#Entferne 195 NaN-Werte vor Übergabe an Q-Q-Plot
+#Q-Q-Plot erstellen
+
+resid = severity["log_resid"]
+resid = resid[np.isfinite(resid)]
+
+
+fgqplot=sm.qqplot(
+    resid,
+    line="45",
+    fit=True)
+plt.title("q-q-plot of residuals – lognormal-model")
+pdf_pages.savefig(fgqplot)
+plt.close()
+
+"""
+Beobachtung: Der Plot verläuft entlang der Idealinie als
+eine S-Kurve und zeigt damit Abweichungen auf. Es scheint 
+also eine systematische Abweichung von der Normalverteilung 
+zu geben, wobei die Stärke dieser Abweichungen noch nicht 
+feststeht.
+"""
+
+
+
+#----------------------------------------------------------------------------------
+
+#Scale-Location-Plot für Streuung der Residuen prüfen
+#Dafür Wurzel aus Residuen verwenden
+
+fig9=plt.figure(figsize=(8, 5))
+plt.scatter(
+    severity["log_pred"],
+    np.sqrt(np.abs(severity["log_resid"])),
+    alpha=0.2,
+    s=10)
+plt.xlabel("predicted log(claim amount)")
+plt.ylabel(r"$\sqrt{|residual|}$")
+plt.title("scale-location-plot – lognormal-model")
+pdf_pages.savefig(fig9)
+plt.close()
+
+"""
+Auch hier wieder keinen Trend erkennbar wie z.B. die Trichterform.
+Die Residuen haben ähnliche Werte egal bei welcher Schadenhöhe.
+"""
+
+"""
+Fazit: Es gibt Abweichungen von Normalverteilung wie im Q-Q-Plot zu sehen.
+Die Residuen scheinen auf keine besonderen Verzerrungen und falschen Fit 
+hinzudeuten.
+
+Als nächstes sollten die beiden bisherigen Modelle Gamma-GLM und Lognormal
+verglichen werden und das Tail-Verhalten bewertet werden (wo die größten
+Probleme aufgetreten waren).
+"""
+
+#-----------------------------------------------------------------------------------
+
+
+#===============================================================================
+#Gamma- und Lognormal-Modell vergleichen und mit beobacht. Daten abgleichen
+#===============================================================================
+
+#Transformiere log-Werte zurück und führe Korrektur für erwarteten
+#Schadenmittelwert mittels (sigma**2) / 2 aus = Bias-Korrektur
+
+sigma2 = lognormal_model.mse_resid
+
+
+#Erwartete Schadenhöhe auf Euro-Skala umrechnen
+severity["lognormal_pred"] = np.exp(
+    lognormal_model.fittedvalues + sigma2 / 2)
+
+print(severity[["ClaimAmount", "lognormal_pred"]].head())
+#Zwar zu hoch, aner wir haben noch keine Durschnittswerte 
+#betrachtet. Wir müssen aber diese vergleichen
+
+# Gamma-Vorhersagen auf Euro-Skala
+severity["gamma_pred"] = gamma_model.fittedvalues
+
+# Beobachteter durchschnittlicher Schaden
+observed_mean = severity["ClaimAmount"].mean()
+
+# Durchschnittliche vorhergesagte Schadenhöhe
+gamma_mean = severity["gamma_pred"].mean()
+
+# Durchschnittliche vorhergesagte Schadenhöhe
+lognormal_mean = severity["lognormal_pred"].mean()
+
+print("Beobachteter Mittelwert:", observed_mean)
+print("Gamma vorhergesagt:", gamma_mean)
+print("Lognormal vorhergesagt:", lognormal_mean)
+
+#----------------------------------------------------------------
+
+
+#Vgl der beiden Modelle nach Altersgruppen
+
+age_comparison = severity.groupby("age_group").agg(
+    observed_mean=("ClaimAmount", "mean"),
+    gamma_mean=("gamma_pred", "mean"),
+    lognormal_mean=("lognormal_pred", "mean"),
+    count=("ClaimAmount", "size")).round(2)
+
+print(age_comparison)
+print()
+
+"""
+Beim Vergleich der Altersgruppen ist Gamma-GLM 
+in jeder Gruppe die bessere Wahl und trifft alle
+Gruppen ziemlich gut.
+
+Das Lognormal-Modell scheint zu viele Gruppen zu 
+unterschätzen und eine Art 'Glättung' über alle
+Gruppen hinweg vorzunehmen.
+"""
+
+
+#Vgl der beiden Modelle nach BM-Klassen
+
+bm_comparison = severity.groupby("bm_group").agg(
+    observed_mean=("ClaimAmount", "mean"),
+    gamma_mean=("gamma_pred", "mean"),
+    lognormal_mean=("lognormal_pred", "mean"),
+    count=("ClaimAmount", "size")).round(2)
+
+print(bm_comparison)
+print()
+
+
+"""
+Ähnlich wie bei den Altersgruppen, kann Gamma-GLM
+auch hier in jeder Gruppe die beobachteten Werte 
+deutlich besser treffen (Ausnahme BM 101-125).
+
+Gamma ist also gegenüber Lognormal überlegen für
+Schadenhöhe, auch wenn statist. Signifikanz von BM 
+durch Lognormal deutlicher rausgearbeitet wurde.
+
+Fazit: Bessere statist. Signifikanz eines Merkmals
+bedeutet nicht eine gute Approximation der 
+Schadenhöhe.
+
+"""
+
+#-----------------------------------------------------------------------------------
+#Die beiden Vgl.-Tabellen in PDF gespeichert
+
+#Altersgruppen-Vgl
+fig10, ax = plt.subplots(figsize=(7, 2.5))
+ax.axis("off")
+table = ax.table(
+    cellText=age_comparison.round(2).values,
+    rowLabels=age_comparison.index,
+    colLabels=age_comparison.columns,
+    loc="center")
+
+table.scale(1.2, 1.4)
+fig10.text(
+    0.02, 0.05,
+    r"$WMRAE=\sum w_{g}\left|\frac{y_{g}-y_{o}}{y_{g}}\right|$"
+    "\nWMRAE (Age Groups) = 1.13%",
+    fontsize=11
+)
+
+plt.title("model comparison by age_group")
+pdf_pages.savefig(fig10, dpi=300, bbox_inches="tight")
+plt.close()
+
+
+#Altersgruppen-Vgl
+fig11, ax = plt.subplots(figsize=(8, 3))
+ax.axis("off")
+table = ax.table(
+    cellText=bm_comparison.round(2).values,
+    rowLabels=bm_comparison.index,
+    colLabels=bm_comparison.columns,
+    loc="center")
+
+table.scale(1.2, 1.4)
+fig11.text(
+    0.02, 0.05,
+    r"$WMRAE=\sum w_{g}\left|\frac{y_{g}-y_{o}}{y_{g}}\right|$"
+    "\nWMRAE (Bonus-Malus Groups) = 3.06%",
+    fontsize=11
+)
+
+plt.title("model comparison by bm_group")
+pdf_pages.savefig(fig11, dpi=300, bbox_inches="tight")
+plt.close()
+
+
+#-----------------------------------------------------------------------------------
+
+"""
+Damit ist entschieden, dass Gamma-Modell als Basismodell
+für die Schadenhöhe zu wählen.
+
+Ob Gesamtmittel, Mittel nach Altersgruppen oder BM-Klassen
+in jedem Bereich war Gamma immer näher an den beobachteten 
+Werten als Lognormal.
+
+Der extreme Tail wurde in beiden Modellen zwar nicht gut
+approx., aber die damit nach oben verzerrten Schaden-
+mittelwerte von Gamma wieder besser erfasst als bei
+Lognormal.
+"""
+#-----------------------------------------------------------------------------------
+
+#===============================================================================
+#Modellgüte des Gamma-GLM genauer untersuchen
+#===============================================================================
+
+#relative Abweichungen für jede Tarifgruppe betrachten
+
+age_comparison["gamma_rel_error"] = (
+    (age_comparison["gamma_mean"] - age_comparison["observed_mean"])
+    / age_comparison["observed_mean"]
+    * 100)
+
+bm_comparison["gamma_rel_error"] = (
+    (bm_comparison["gamma_mean"] - bm_comparison["observed_mean"])
+    / bm_comparison["observed_mean"]
+    * 100)
+
+print("Altersgruppen:")
+print(age_comparison)
+
+"""
+In allen Altersgruppen ist die proz. Abweichung kleiner als 6%, wobei
+nur die junge Altersgruppe '18-25' unterschätzt wird mit -5,75%. Das 
+kann man vermutlich auf den Heavy-Tail zurückführen.
+
+Insgesamt sehr gut getroffen und geringe Abweichungen.
+"""
+
+
+print("\nBM-Gruppen:")
+print(bm_comparison)
+
+"""
+Bei den BM-Klassen werden die niedirgen BM-Klassen sehr gut getroffen,
+wohingegen die höheren Klassen leider deutlich schlechter approx. werden.
+
+Die drei höchsten Klassen weichen deutlich stärker ab, wobei nur die 
+Klasse '81-100' mit 4106 Beobachtungen ausreichend stark vertreten ist.
+Für die anderen ergeben sich durch '101-125 = 1093 Beob.' und
+'>125 = 163 Beob.' viel weniger Beobachtungen.
+
+Daraus kann noch nicht auf ein schlechtes Modell geschlossen werden, da
+diese Abweichungen durch mgl. Streuung bei zu wenigen Beobachtungen 
+verursacht werden kann.
+"""
+
+#-----------------------------------------------------------------------------------
+"""
+Jetzt betrachten wir eine Kennzahl, welche alle Abweichungen in beiden Tarifmerkmalen
+und den Alters-/BM-Gruppen mit der Anzahl der Beobachtungen berücksichtigt
+
+--> Weighted Mean Relative Absolute Error (WMRAE)
+    = Anteil an Gesamtbeob. * rel. Gamma-Fehler
+
+Das wird die relativen extremen Abweichungen bei den Gruppen mit wenigen Beobachtungen
+bspw. 'BM > 125' mit 163 Beobachtungen besser beurteilen.
+
+Durch die Absolubeträge heben sich Abweichungen pos. und neg. Tendenz nicht auf und
+haben direkten Einfluss auf die "Gesamtabweichung".
+"""
+
+#WMRAE für Alters- und BM-Gruppen berechnen
+
+age_wmrae = (
+    (age_comparison["count"] / age_comparison["count"].sum())
+    * age_comparison["gamma_rel_error"].abs()).sum()
+
+bm_wmrae = (
+    (bm_comparison["count"] / bm_comparison["count"].sum())
+    * bm_comparison["gamma_rel_error"].abs()).sum()
+
+print(f"WMRAE Altersgruppen: {age_wmrae:.2f}%")
+print()
+print(f"WMRAE Bonus-Malus-Gruppen: {bm_wmrae:.2f}%")
+
+"""
+WMRAE für Altersgruppen ist 1.13%
+
+Das ist eine sehr kleine Abweichung von den beobachteten 
+Schadenmittelwerten und damit eine sehr gute Kalibrierung
+des Modells bzgl. der Altersgruppen.
+
+---------------------------------------------------------
+WMRAE für Bonus-Malus-Gruppen ist 3.06%
+
+Das ist ebenfalls eine geringe Abweichung und deutlich 
+klarer zu verstehen, als die einzelnen großen Fehler bei
+den hohen BM-Gruppen mit wenigen Beobachtungen.
+
+---------------------------------------------------------
+Schlussfolgerung:
+
+Unter Berücksichtigung der Beobachtungsanzahlen der
+einzelnen Tarifgruppen zeigen die gewichteten mittleren
+relativen Fehler (WMRAE) bei beiden Gruppen sehr kleine 
+Abweichungen von den durchschnittlichen Schadenhöhen.
+
+Das Gamma-GLM kann also sehr wohl die Tarifgruppen sehr 
+genau treffen und eignet sich daher als Severity-Modell.
+
+Die zuvor gesehen Abweichungen und Fehler existieren zwar,
+beeinflussen aber den 'Gesamtfehler' des Modells weniger
+stark als zuvor vermutet.
+"""
+
+#-----------------------------------------------------------------------------------
+#Erinnerung an Deviance und Pearson Chi**2 um mit oben
+#gemachten Analysen Gesamtbild zu klären
+
+deviance_ratio = gamma_model.deviance / gamma_model.df_resid
+pearson_ratio = gamma_model.pearson_chi2 / gamma_model.df_resid
+
+print(f"Deviance / df: {deviance_ratio:.2f}")
+print(f"Pearson Chi² / df: {pearson_ratio:.2f}")
+
+"""
+Deviance = 1.65
+--> ist gering genug, um Gamma als brauchbar für das systematische
+Erfassen der Daten zu bewerten.
+
+
+Pearson = 46.99
+--> ist sehr hoch und spricht für eine große Streuung. Der Heavy Tail
+wird also durch Gamma nicht komplett abbgebildet.
+
+---------------------------------------------------------------------
+Fazit:
+Gamma-GLM erfasst die durschnittliche Schadenhöhe der Tarifgruppen 
+sehr gut, bildet aber die extreme Streuung der Schadenhöhenverteilung
+nur eingeschränkt ab. Somit eine Modellgrenze identifiziert, die zur
+Zeit nicht behoben werden kann.
+
+In der Praxis müsste man nun komplexere Modelle/Ideen verwenden und 
+mittels weiterer Analysen den Tail besser beschreiben.
+"""
+
+#Güteanalyse damit vorerst abgeschlossen
+#-----------------------------------------------------------------------------------
+
+#===============================================================================
+#Tarifstruktur konstruieren und Übergang zum Pure Premium vorbereiten
+#===============================================================================
+
+#Umrechnung der Modellparameter in vorläufige Tariffaktoren
+print("\nTarifrelativitäten Gamma GLM:")
+for name, coef in gamma_model.params.items():
+    factor = np.exp(coef)
+    print(f"{name}: Faktor = {factor:.3f}")
+
+
+#Alters- und BM-Tarife im Vergleich zur Referenzgruppe bestimmen
+
+print("\nAlter:")
+for group in severity["age_group"].dropna().unique():
+    if group == "18-25":
+        factor = 1.0
+    else:
+        factor = np.exp(gamma_model.params[f"age_group[T.{group}]"])
+    print(f"{group}: {factor:.3f}")
+
+print("\nBonus-Malus:")
+for group in severity["bm_group"].dropna().unique():
+    if group == "<=50":
+        factor = 1.0
+    else:
+        factor = np.exp(gamma_model.params[f"bm_group[T.{group}]"])
+    print(f"{group}: {factor:.3f}")
 
 
 
