@@ -1,3 +1,5 @@
+[🇬🇧 English](README.md) | [🇩🇪 Deutsch](README_DE.md)
+
 # Über das Projekt
 
 Dieses Projekt wurde eigenständig im Rahmen eines Selbststudiums in Aktuariat und Versicherungsmathematik nach dem Abschluss meines M.Sc. Mathematik entwickelt.
