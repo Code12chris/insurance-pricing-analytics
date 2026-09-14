@@ -196,7 +196,7 @@ axes1[1].grid(alpha=0.3)
 
 plt.suptitle('comparison: empirical data vs. poisson distribution', fontsize=14)
 plt.tight_layout()
-pdf_pages.savefig(fig1)
+pdf_pages.savefig(fig1,dpi=180)
 plt.close(fig1)
 
 
@@ -389,7 +389,7 @@ sns.heatmap( heatmap_data, annot=True, fmt='.3f', cmap='YlOrRd' )
 plt.title('expected claims frequency from Poisson-GLM')
 plt.xlabel('BonusMalus_group')
 plt.ylabel('age_group')
-pdf_pages.savefig(fig2)
+pdf_pages.savefig(fig2, dpi=180)
 plt.close(fig2)
 
 
@@ -437,7 +437,7 @@ plt.title('distribution claim amount on logarithmic scale')
 plt.xlabel('log10(claim amount in €)')
 plt.ylabel('number of claims')
 plt.tight_layout()
-pdf_pages.savefig(fig3)
+pdf_pages.savefig(fig3, dpi=180)
 plt.close(fig3)
 
 
@@ -628,7 +628,7 @@ plt.ylabel("relative growth")
 plt.title("tail growth of claim amount sorted after age_group")
 plt.xticks(rotation=0)
 plt.tight_layout()
-pdf_pages.savefig(fig4)
+pdf_pages.savefig(fig4, dpi=180)
 plt.close(fig4)
 
 
@@ -852,7 +852,7 @@ plt.hist(resid, bins=100)
 plt.xlabel("deviance residuals")
 plt.ylabel("count")
 plt.title("deviance residuals of gamma-GLM")
-pdf_pages.savefig(fig5)
+pdf_pages.savefig(fig5, dpi=180)
 plt.close(fig5)
 
 
@@ -866,7 +866,7 @@ plt.xlabel("predicted claim amount")
 plt.ylabel("deviance residuals")
 plt.title("deviance residuals vs. predicted severity")
 plt.axhline(0, linestyle="--")
-pdf_pages.savefig(fig6)
+pdf_pages.savefig(fig6, dpi=180)
 plt.close(fig6)
 
 
@@ -972,7 +972,7 @@ plt.axhline(0, linestyle="--")
 plt.xlabel("predicted log(claim amount)")
 plt.ylabel("residuals")
 plt.title("residuals vs. predicted values – lognormal-model")
-pdf_pages.savefig(fig7)
+pdf_pages.savefig(fig7, dpi=180)
 plt.close()
 
 
@@ -996,7 +996,7 @@ plt.hist(
 plt.xlabel("residuals")
 plt.ylabel("frequency")
 plt.title("distribution of residuals – lognormal-model")
-pdf_pages.savefig(fig8)
+pdf_pages.savefig(fig8, dpi=180)
 plt.close()
 
 """
@@ -1036,7 +1036,7 @@ fgqplot=sm.qqplot(
     line="45",
     fit=True)
 plt.title("q-q-plot of residuals – lognormal-model")
-pdf_pages.savefig(fgqplot)
+pdf_pages.savefig(fgqplot, dpi=180)
 plt.close()
 
 """
@@ -1063,7 +1063,7 @@ plt.scatter(
 plt.xlabel("predicted log(claim amount)")
 plt.ylabel(r"$\sqrt{|residual|}$")
 plt.title("scale-location-plot – lognormal-model")
-pdf_pages.savefig(fig9)
+pdf_pages.savefig(fig9, dpi=180)
 plt.close()
 
 """
@@ -1191,7 +1191,7 @@ fig10.text(
 )
 
 plt.title("model comparison by age_group")
-pdf_pages.savefig(fig10, dpi=300, bbox_inches="tight")
+pdf_pages.savefig(fig10, dpi=180, bbox_inches="tight")
 plt.close()
 
 
@@ -1213,7 +1213,7 @@ fig11.text(
 )
 
 plt.title("model comparison by bm_group")
-pdf_pages.savefig(fig11, dpi=300, bbox_inches="tight")
+pdf_pages.savefig(fig11, dpi=180, bbox_inches="tight")
 plt.close()
 
 
@@ -1373,7 +1373,7 @@ mittels weiterer Analysen den Tail besser beschreiben.
 #-----------------------------------------------------------------------------------
 
 #===============================================================================
-#Tarifstruktur konstruieren und Übergang zum Pure Premium vorbereiten
+#Tarifstruktur konstruieren und Pure Premium bestimmen
 #===============================================================================
 
 #Umrechnung der Modellparameter in vorläufige Tariffaktoren
@@ -1401,6 +1401,276 @@ for group in severity["bm_group"].dropna().unique():
         factor = np.exp(gamma_model.params[f"bm_group[T.{group}]"])
     print(f"{group}: {factor:.3f}")
 
+#-----------------------------------------------------------------------------------
+#Erwartete Schadenhäufigkeit und Schadenhöhe bereitstellen
+
+# Erwartete Schadenhäufigkeit (Poisson-GLM)
+policies["freq_pred"] = poisson_model.predict(policies)
+
+# Erwartete Schadenhöhe (Gamma-GLM)
+policies["sev_pred"] = gamma_model.predict(policies)
+
+
+#Pure Premium berechnen --> jährliche Schadenkosten erhalten
+policies["pure_premium"] = policies["freq_pred"] * policies["sev_pred"]
+
+
+print(policies[["IDpol", "freq_pred", "sev_pred",
+                "pure_premium"]].head())
+
+
+#Jetzt die Alters- und BM-Gruppen in entsprechenden
+#Tarifgruppen zusammengefasst
+
+pricing_summary = (
+    policies.groupby(["age_group", "bm_group"])
+    .agg(
+        policies=("IDpol", "count"),
+        freq_pred=("freq_pred", "first"),
+        sev_pred=("sev_pred", "first"),
+        pure_premium=("pure_premium", "first"))
+    .round(2))
+
+print(pricing_summary)
+
+#-----------------------------------------------------------------------------------
+
+#Visualisierungen zum Tarif erstellen
+#1. Heatmap
+#2. Balkendiag. für Vergleich
+
+
+pure_premium_matrix = pricing_summary["pure_premium"].unstack()
+
+fig12, ax = plt.subplots(figsize=(8, 5))
+im = ax.imshow(pure_premium_matrix.values, aspect="auto", cmap="YlOrRd")
+
+ax.set_xticks(range(len(pure_premium_matrix.columns)))
+ax.set_xticklabels(pure_premium_matrix.columns)
+
+ax.set_yticks(range(len(pure_premium_matrix.index)))
+ax.set_yticklabels(pure_premium_matrix.index)
+
+ax.set_xlabel("Bonus-Malus group")
+ax.set_ylabel("age group")
+ax.set_title("expected pure premium (€) by tariff class")
+
+# Werte in die Heatmap schreiben
+for i in range(pure_premium_matrix.shape[0]):
+    for j in range(pure_premium_matrix.shape[1]):
+        ax.text(
+            j, i,
+            f"{pure_premium_matrix.iloc[i, j]:.0f}",
+            ha="center",
+            va="center",
+            fontsize=8)
+
+fig12.colorbar(im, ax=ax, label="pure premium (€)")
+plt.savefig("pure_premium_heatmap.png", dpi=200, bbox_inches="tight")
+pdf_pages.savefig(fig12, dpi=180)
+
+plt.close()
+
+
+#Balkendiagramm der Pure Premium
+plot_data = pricing_summary.reset_index()
+
+age_groups = ["18-25", "26-40", "41-60", "61+"]
+bm_order = ["<=50", "51-64", "65-80", "81-100", "101-125", ">125"]
+
+fig13, axes = plt.subplots(2, 2, figsize=(12, 8), sharey=True)
+axes = axes.flatten()
+
+for ax, age in zip(axes, age_groups):
+    subset = plot_data[plot_data["age_group"] == age].copy()
+    subset["bm_group"] = subset["bm_group"].astype(str)
+    subset = subset.set_index("bm_group").loc[bm_order].reset_index()
+
+    ax.bar(
+        ["BM " + bm for bm in subset["bm_group"]],
+        subset["pure_premium"])
+
+    ax.set_title(f"age {age}")
+    ax.set_xlabel("Bonus-Malus group")
+    ax.tick_params(axis="x", rotation=30, labelsize=8)
+
+axes[0].set_ylabel("pure premium (€)")
+axes[2].set_ylabel("pure premium (€)")
+
+fig13.suptitle("expected pure premium by age group and Bonus-Malus group", 
+            fontsize=14)
+plt.tight_layout()
+
+
+pdf_pages.savefig(fig13, dpi=180, bbox_inches="tight")
+plt.close()
+
+#-----------------------------------------------------------------------------------
+#===============================================================================
+#Tarifstruktur konstruieren und Pure Premium bestimmen
+#===============================================================================
+
+"""
+Pure-Premium-Plausibilität prüfen über Vgl. mit beobachteten Schaden und 
+Exposure aus Daten. Jetzt können wir ein erstes Mal Brauchbarkeit der 
+Modelle testen, durch die Abweichungen zu den erbrachten Leistungen.
+"""
+
+#Berechnet für jeweiligen Gruppen die Summe der Claims
+observed_cost = (severity_data.groupby(["age_group", "bm_group"])
+                .agg(observed_claim_amount=("ClaimAmount", "sum")))
+
+
+#Berechnet für die Gruppen jeweils die Exposure
+observed_exposure = (policies.groupby(["age_group", "bm_group"])
+                .agg(exposure=("Exposure", "sum")))
+
+#Zusammenführen für Bestummung der jährlichen Schadenskosten
+observed_pricing = observed_exposure.join(observed_cost)
+
+
+#Berechnung jährlicher Schadenskosten pro Police
+
+observed_pricing["observed_pure_premium"] = (
+    observed_pricing["observed_claim_amount"]
+    / observed_pricing["exposure"])
+
+
+
+#Erstellen der finalen Table für Vgl. und Abweichungen
+pricing_check = pricing_summary.join(
+    observed_pricing["observed_pure_premium"])
+
+
+#Relative Abweichungen in Table aufnehmen
+pricing_check["relative_error"] = (
+    (pricing_check["pure_premium"] - pricing_check["observed_pure_premium"])
+    / pricing_check["observed_pure_premium"]* 100).round(2)
+
+print()
+print(pricing_check.round(2))
+
+"""
+Beobachtung: 
+
+Es gibt bei den einzelnen Gruppierungen deutliche Abweichungen so z.B.
+bei Alter '18-25' und BM '51-64' --> +359% zu beobachteten jährlichen 
+Schadenkosten. Wohingegen selbe Altersgruppe mit BM '>125' --> -29% 
+Abweichung hat.
+
+Wie bereits bemerkt gibt es durch wenige Extremschäden große Schwankungen
+bzw. Verzerrungen. Das Modell scheint system. Zusammenhänge abbzubilden, 
+aber auch eine Glättung vorzunehmen.
+
+Es wäre also besser wie bei der Güte vom Gamma-GLM eine Gewichtung der 
+einzelnen Gruppen zu machen und die Exposure als Gewicht einzurechnen.
+
+Das geschieht im nächsten Code-Abschnitt.
+"""
+
+
+#Gewichtung durch Exposure berücksichtigen
+pricing_check["exposure"] = observed_pricing["exposure"]
+
+weighted_error = (pricing_check["exposure"]
+    * pricing_check["relative_error"].abs()
+).sum() / pricing_check["exposure"].sum()
+
+print(f"Exposure-weighted absolute relative error:{weighted_error:.2f}%")
+
+"""
+Diese Kennzahl für Abweichung mit Gewichtung durch Exposure ist mit 49,80%
+erstmal groß, aber wird durch hohe Abweichungen einiger Gruppen ermöglicht.
+
+Die Kennzahl reagiert empfindlich auf die hohen ClaimAmounts, welche auf 
+individueller Ebene einzelne Gruppierungen nach oben treiben. 
+
+Diese Kennzahl ist also nur ein erster Check für Plausibilität von 
+Tarifzahlen, bewertet aber nicht den Gesamtfit für das Portfolio. Das 
+wird weiter unten in den nächsten Code-Zeilen geschehen, womit dann die
+Bewertung der gesamten Struktur die Güte der Tarifierung aufzeigt.
+"""
+
+#Portfolio Validierung in einer Table aufbereiten
+
+"""
+Jede Police hat eine unterschiedliche Exposure und kann nicht gemeinsam
+gemittelt werden, d.h. jede Police muss mit ihrer eigenen Exposure gewichtet
+werden und dann später durch die Gesamtexposure geteilt werden.
+"""
+
+#Exposure für gesamtes Portfolio auf Nomiertheit (=1) prüfen
+print(policies["Exposure"].describe())
+print(policies["Exposure"].mean())
+
+#Hier ist eine Mean-Exposure von ca 0.53 zu sehen, was nochmals das 
+#Gewichten bestätigt 
+
+
+
+"""
+Hier werden jetzt die beobachteten Claims mit dem Modell-Pure-Premium
+verglichen und ein relativer Fehler dazu bestimmt. Das soll dann die 
+Validierung des gesamten Portfolios darstellen.
+"""
+
+#Beobachtete Claim für Table vorbereiten
+observed_portfolio = (
+    severity_data["ClaimAmount"].sum()
+    / policies["Exposure"].sum())
+
+
+modeled_portfolio = (
+    (policies["pure_premium"] * policies["Exposure"]).sum()
+    / policies["Exposure"].sum())
+
+
+portfolio_error = (
+    (modeled_portfolio - observed_portfolio)
+    / observed_portfolio * 100)
+
+
+#Table nun erstellt und ausgegeben
+validation_table = pd.DataFrame({
+    "Metric": [
+        "Observed portfolio claim cost (€)",
+        "Modeled portfolio pure premium (€)",
+        "Portfolio relative error (%)",
+        "Exposure-weighted tariff-class error (%)"],
+    "Value": [
+        round(observed_portfolio, 2),
+        round(modeled_portfolio, 2),
+        round(portfolio_error, 2),
+        round(weighted_error, 2)]})
+
+print("\nPortfolio validation:")
+print(validation_table)
+
+
+"""
+Beobachtung:
+
+Observed = 169,31 ; tatsächlicher beobachteter Schaden pro Jahr
+
+Model Pure Premium = 223,34 ; modellierter Schaden pro Jahr
+
+Portfolio rel. Fehler = 31,91% ; 
+Modell macht auf Portfolioebene insgesamt einen ca 30% höheren Schaden aus und
+überschätzt damit die Schäden 
+
+Weighted Error = 49,80% ;
+Stellt die durchschnittliche absolute Abweichung der 24 Tarifklassen nach Exposure
+gewichtet da. Wird durch einzelne verzerrte Tarifklassen stark beeinflusst.
+
+------------------------------------------------------------------------------
+Fazit: 
+
+Der rel Fehler für das gesamte Portfolio ist zu hoch und könnte durch falsche 
+Berücksichtigung der Exposure aus den Modellen entstanden sein. Also sollte nochmal
+der Einfluss der Exposure auf z.B. das Poisson-Modell geprüft werden.
+"""
+
+
 
 
 
@@ -1410,4 +1680,3 @@ for group in severity["bm_group"].dropna().unique():
 
 pdf_pages.close()
 print('PDF mit allen Plots gespeichert')
-
