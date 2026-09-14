@@ -56,7 +56,8 @@ insurance-pricing-analytics/
 ├── analyse_plots.pdf    # important plots from various analytic sections
 ├── freMTPL2freq.csv     # Policy and frequency dataset
 ├── freMTPL2sev.csv      # Claim severity dataset
-└── README.md
+├── README_DE.md         # deutsche Version Projektübersicht
+└── README.md            # project overview
 ```
 
 
@@ -91,6 +92,7 @@ Severity is analyzed across driver age groups and Bonus-Malus groups.
 ### Gamma GLM (Selected Model)
 
 A Gamma GLM with a log link is used as the baseline severity model.
+
 
 ### Model
 ClaimAmount ~ age_group + bm_group
@@ -145,13 +147,13 @@ Observed and predicted mean claim severities are compared across:
    WMRAE (Age Groups)	         1.13%
    WMRAE (Bonus-Malus Groups)	   3.06%
    Deviance	                     1.65
-   Pearson Chi²                  46.9   
+   Pearson Chi²                  46.99   
 ```
 
 The Gamma GLM shows very good calibration for the average claim severity across tariff groups, while Pearson dispersion indicates remaining heavy-tail variability that is not fully explained by the Gamma distribution.
 
 
-### Tariff Relativities
+## Tariff Relativities
 
 Severity rating factors are obtained by exponentiating the Gamma GLM coefficients.
 
@@ -185,6 +187,96 @@ The youngest driver group is estimated to have the highest expected claim severi
 Bonus-Malus effects are included for comparison but are not statistically significant in the selected Gamma severity model.
 
 
+## Pure Premium Calculation
+
+The final pricing component is the **Pure Premium**, which combines the expected claim frequency and the expected claim severity into a single expected annual claim cost.
+
+**Pure Premium = Expected Claim Frequency × Expected Claim Severity**
+
+The frequency predictions are obtained from the Poisson GLM, estimated with a log link and `log(Exposure)` as an offset. Consequently, the predicted claim frequencies (`freq_pred`) account for differences in policy exposure.
+
+The expected claim severity is obtained from the selected Gamma GLM. Multiplying both model predictions yields the expected annual claim cost for each tariff class.
+
+## Pricing Results
+
+The Pure Premium analysis combines the estimated frequency and severity models for all combinations of driver age group and Bonus-Malus group.
+
+The resulting tariff matrix contains **24 tariff classes** and illustrates how expected annual claim costs vary across different risk profiles.
+
+### Main findings
+
+- **Lowest Pure Premium:** Driver age **26–40** with **Bonus-Malus ≤50** → **€121.63**
+- Driver age **41–60** with **Bonus-Malus ≤50** → **€150.88**
+- **Highest Pure Premium:** Driver age **18–25** with **Bonus-Malus >125** → **€2,065.53**
+
+The pricing results show a clear increase in expected claim costs for higher Bonus-Malus groups. Driver age affects both claim frequency and claim severity, while the Bonus-Malus effect is primarily driven by the frequency model.
+
+## Pure Premium Tariff Matrix
+
+The complete tariff matrix is visualized as a heatmap covering all 24 combinations of driver age groups and Bonus-Malus groups.
+
+The visualization highlights the combined effect of both pricing components and makes the differences between low-risk and high-risk tariff classes immediately visible.
+
+![Pure Premium Heatmap](pure_premium_heatmap.png)
+
+The heatmap shows that the highest expected annual claim costs occur for young drivers with high Bonus-Malus levels, whereas the lowest expected costs occur for middle-aged drivers with low Bonus-Malus levels.
+
+## Model Validation
+
+After estimating the pricing models, the modeled Pure Premium was compared with the observed portfolio claim costs.
+
+### Portfolio Validation
+
+The observed portfolio claim cost per unit of exposure is compared with the exposure-weighted modeled Pure Premium.
+
+| Metric | Result |
+|--------|-------:|
+| Observed portfolio claim cost | **€169.31** |
+| Modeled portfolio Pure Premium | **€223.34** |
+| Portfolio relative error | **31.91%** |
+
+The modeled portfolio Pure Premium overestimates the observed claim cost by approximately **31.9%** on portfolio level. This metric evaluates the calibration of the overall pricing model across the complete insurance portfolio.
+
+### Tariff-Class Validation
+
+As an additional plausibility check, modeled and observed Pure Premium values were compared separately for the **24 tariff classes**.
+
+| Metric | Result |
+|--------|-------:|
+| Exposure-weighted tariff-class relative error | **49.80%** |
+
+This tariff-class metric should **not** be interpreted as the overall model error. Individual tariff classes contain substantially different exposure volumes and are affected by a small number of very large claims. As a result, tariff-class errors are considerably more volatile than the aggregated portfolio validation.
+
+## Interpretation of Results
+
+The pricing workflow produces meaningful differences between driver risk profiles while also illustrating the limitations of a simplified actuarial pricing model.
+
+### Frequency Model
+
+The Poisson GLM identifies Bonus-Malus as the dominant driver of claim frequency. Higher Bonus-Malus groups consistently receive substantially higher expected claim frequencies.
+
+### Severity Model
+
+The Gamma GLM captures systematic differences in average claim severity across age groups. Bonus-Malus effects in the severity model are comparatively small and are not statistically significant.
+
+### Combined Pricing Model
+
+The resulting Pure Premium reflects both components simultaneously. High-risk tariff classes receive significantly higher expected annual claim costs than low-risk tariff classes, which is consistent with the underlying frequency and severity estimates.
+
+At the same time, the portfolio validation indicates that the simplified model still overestimates observed portfolio claim costs. This demonstrates that the model captures important pricing patterns but does not fully explain the variability of the underlying insurance portfolio.
+
+## Limitations
+
+This project intentionally implements a simplified actuarial pricing workflow and therefore has several limitations.
+
+- Only **driver age** and **Bonus-Malus group** are used as rating variables.
+- Additional pricing factors such as vehicle characteristics, geographic information, fuel type, or vehicle power are not included.
+- The severity distribution remains strongly right-skewed with a small number of extremely large claims.
+- The Gamma GLM captures average claim severity well but cannot fully explain heavy-tail variability in individual claims.
+- Portfolio validation shows that the modeled Pure Premium remains above the observed portfolio claim cost, indicating remaining calibration error.
+
+These limitations are expected for a compact GLM pricing model and provide opportunities for further model refinement rather than indicating a failure of the pricing approach.
+
 
 ## Project Status
 
@@ -198,8 +290,11 @@ Bonus-Malus effects are included for comparison but are not statistically signif
 * [x] Residual diagnostics.
 * [x] Gamma model validation (WMRAE, Deviance, Pearson Chi²).
 * [x] Severity tariff relativities.
-* [ ] Pure Premium calculation *(in progress)*.
-* [ ] Portfolio procing examples and visualization *(in progress)*.
+* [x] Pure Premium calculation.
+* [x] Visualization tariff classes.
+* [ ] Determine exposure influence in individual tariff classes *(in progress)*.
+* [ ] Pure Premium validation (deviation analysis) *(in progress)*.
+* [ ] Finalizing project and developing jupyter-presentation *(in progress)*.
 
 
 
@@ -217,12 +312,21 @@ This project demonstrates practical implementation of actuarial pricing methods 
 
 ## Planned Improvements
 
-The current repository contains the complete implementation in main.py, where the full actuarial workflow is developed and executed.
+The current repository contains the complete implementation in `main.py`, where the pricing workflow is developed and validated.
 
-A second version of the project is planned as a Jupyter Notebook after the analysis is completed. The notebook will present the finished workflow in a structured, stakeholder-friendly format by combining code, visualizations, mathematical explanations, and model interpretations in a single document.
+Planned extensions include:
 
-This separation keeps the repository organized: the Python script serves as the development version, while the notebook will serve as the presentation and documentation version of the completed project.
+- Creating a structured Jupyter Notebook version of the project for presentation and documentation.
+- Extending the pricing model with additional rating variables available in the dataset.
+- Investigating calibration improvements for the Pure Premium model across tariff classes.
+- Exploring alternative severity distributions and additional validation metrics.
 
+
+### Future Work
+
+The public `freMTPL2` dataset does not contain claim development information required for reserving methods or company-specific data required for Solvency II capital modeling.
+
+These topics are therefore outside the scope of this project but represent natural extensions when more comprehensive insurance datasets are available.
 
 
 ## How to Run
@@ -252,6 +356,7 @@ Python 3.8.5 or higher is required.
 
 4. Run the analysis:
    python main.py
+
 
 
 ### Notes
