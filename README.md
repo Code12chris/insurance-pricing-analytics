@@ -1,3 +1,5 @@
+[🇬🇧 English](README.md) | [🇩🇪 Deutsch](README_DE.md)
+
 # About
 This project was developed independently as part of self-directed study in actuarial science and insurance mathematics, following the completion of an M.Sc. in Mathematics.
 
