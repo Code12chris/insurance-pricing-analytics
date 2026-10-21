@@ -52,14 +52,15 @@ Both datasets are merged using the policy identifier (`IDpol`).
 ```text
 insurance-pricing-analytics/
 │
-├── main.py              # Complete analysis workflow
-├── queries.sql          # SQL queries used for portfolio exploration
-├── insurance.db         # SQLite database created from the CSV files
-├── analyse_plots.pdf    # important plots from various analytic sections
-├── freMTPL2freq.csv     # Policy and frequency dataset
-├── freMTPL2sev.csv      # Claim severity dataset
-├── README_DE.md         # deutsche Version Projektübersicht
-└── README.md            # project overview
+├── main.py               # Complete analysis workflow
+├── queries.sql           # SQL queries used for portfolio exploration
+├── policies_analysis.sql # SQL queries used for a more detailed portfolio analysis
+├── insurance.db          # SQLite database created from the CSV files
+├── analyse_plots.pdf     # important plots from various analytic sections
+├── freMTPL2freq.csv      # Policy and frequency dataset
+├── freMTPL2sev.csv       # Claim severity dataset
+├── README_DE.md          # deutsche Version Projektübersicht
+└── README.md             # project overview
 ```
 
 
