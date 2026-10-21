@@ -47,14 +47,15 @@ Beide Datensätze werden über die Policen-ID (`IDpol`) zusammengeführt.
 ```text
 insurance-pricing-analytics/
 │
-├── main.py              # vollständige Analyse Workflow
-├── queries.sql          # SQL Befehle für Portfolio Untersuchung
-├── insurance.db         # SQLite database aus CSV-Dateien erstellt
-├── analyse_plots.pdf    # wichtige Grafiken von verschiedenen Analyse-Abschnitten
-├── freMTPL2freq.csv     # Policen und Schadenhäufigkeit - Daten
-├── freMTPL2sev.csv      # Schadenbeträge - Daten
-├── README_DE.md         # deutsche Version Projektübersicht
-└── README.md            # project overview
+├── main.py               # vollständige Analyse Workflow
+├── queries.sql           # SQL Befehle für Portfolio Untersuchung
+├── policies_analysis.sql # SQL Abfragen für detailliertere Portfolio-Analyse
+├── insurance.db          # SQLite database aus CSV-Dateien erstellt
+├── analyse_plots.pdf     # wichtige Grafiken von verschiedenen Analyse-Abschnitten
+├── freMTPL2freq.csv      # Policen und Schadenhäufigkeit - Daten
+├── freMTPL2sev.csv       # Schadenbeträge - Daten
+├── README_DE.md          # deutsche Version Projektübersicht
+└── README.md             # project overview
 ```
 
 ## Modellierung der Schadenfrequenz
