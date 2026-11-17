@@ -1115,3 +1115,472 @@ Interpretation:
 */
 
 
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+-- CHAPTER 4  Advanced analyses with window functions
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+
+/*
+A window function computes a value for each row from a group of related
+rows (the "window") WITHOUT collapsing the rows like GROUP BY does.
+    function() OVER (PARTITION BY ... ORDER BY ... ROWS BETWEEN ...)
+    - PARTITION BY: restarts the calculation for each group
+    - ORDER BY:     order of the rows inside the window
+    - ROWS BETWEEN: which neighbouring rows are included (the "frame")
+
+Every query below answers a pricing question:
+    4.1 RANK          which tariff cells are most expensive, and why?
+    4.2 ROW_NUMBER    how much does one single claim matter per age group?
+    4.3 PARTITION BY  how different is the Bonus-Malus mix per age group?
+    4.4 LAG           how much does each Bonus-Malus step add?
+    4.5 window frame  what does the age curve look like without noise?
+    4.6 PERCENT_RANK  where should large claims be capped?
+    4.7 NTILE         how well does the age x Bonus-Malus tariff rank risks?
+                      (lift chart and Gini index)
+
+Important: window functions are evaluated AFTER WHERE. A filter in the same
+query therefore changes the window (e.g. shares no longer refer to the whole
+group). Filters on window results go into an outer query, as in 4.2 and 4.3.
+*/
+
+------------------------------------------------------------------------
+-- 4.1 RANK: the most expensive tariff cells, with and without large claims
+------------------------------------------------------------------------
+
+/*
+RANK() numbers the cells by observed pure premium (equal values share a
+rank). Ranking once with all claims and once with claims capped at 50,000
+shows which cells are expensive because of their frequency and which only
+because of single large claims.
+*/
+
+WITH policy_metrics AS (
+    SELECT
+        age_group, bm_group,
+        SUM(Exposure) AS policy_years,
+        SUM(ClaimNb)  AS claim_count
+    FROM v_policies_rated
+    GROUP BY age_group, bm_group
+),
+claim_metrics AS (
+    SELECT
+        age_group, bm_group,
+        SUM(ClaimAmount)             AS claim_amount,
+        SUM(MIN(ClaimAmount, 50000)) AS claim_amount_capped
+    FROM v_claims_rated
+    GROUP BY age_group, bm_group
+),
+cell AS (
+    SELECT
+        p.age_group,
+        p.bm_group,
+        p.claim_count,
+        COALESCE(c.claim_amount, 0)        / p.policy_years AS pure_premium,
+        COALESCE(c.claim_amount_capped, 0) / p.policy_years AS pure_premium_capped
+    FROM policy_metrics p
+    LEFT JOIN claim_metrics c
+        ON c.age_group = p.age_group
+       AND c.bm_group  = p.bm_group
+)
+SELECT
+    age_group,
+    bm_group,
+    claim_count,
+    ROUND(pure_premium, 0)                             AS pure_premium,
+    RANK() OVER (ORDER BY pure_premium DESC)           AS rank_all_claims,
+    ROUND(pure_premium_capped, 0)                      AS pure_premium_capped,
+    RANK() OVER (ORDER BY pure_premium_capped DESC)    AS rank_capped
+FROM cell
+ORDER BY rank_all_claims
+LIMIT 10;
+
+/*
+Results (top 3 with all claims):
+  18-25 / >125     PP 2,898  rank 1  | capped 1,630  rank 1
+  61+   / >125     PP 1,154  rank 2  | capped 1,154  rank 2
+  18-25 / 81-100   PP 1,151  rank 3  | capped   353  rank 9
+
+Interpretation:
+Most expensive cells stay expensive when large claims are capped: their
+frequency is high (Bonus-Malus above 100). The exception is 18-25 / 81-100,
+which falls from rank 3 to rank 9: its high cost comes from the three
+claims above 1 million, not from frequent claims. A tariff should not
+charge this cell the full observed value (see large-loss loading in
+features.py).
+*/
+
+------------------------------------------------------------------------
+-- 4.2 ROW_NUMBER: the largest claim in each age group
+------------------------------------------------------------------------
+
+/*
+ROW_NUMBER() OVER (PARTITION BY age_group ORDER BY ClaimAmount DESC) numbers
+the claims within each age group from the largest down; row 1 is the
+largest claim of the group. SUM(...) OVER (PARTITION BY age_group) is the
+group total on every row, so the share can be computed directly.
+The filter rn = 1 is applied in the outer query (see note at chapter start).
+*/
+
+WITH ranked_claims AS (
+    SELECT
+        age_group,
+        age_order,
+        ClaimAmount,
+        ROW_NUMBER() OVER (PARTITION BY age_group ORDER BY ClaimAmount DESC) AS rn,
+        SUM(ClaimAmount) OVER (PARTITION BY age_group)                      AS group_total
+    FROM v_claims_rated
+)
+SELECT
+    age_group,
+    ROUND(ClaimAmount, 0)                     AS largest_claim,
+    ROUND(100 * ClaimAmount / group_total, 1) AS share_of_group_total_pct
+FROM ranked_claims
+WHERE rn = 1
+ORDER BY age_order;
+
+/*
+Results:
+  18-25   4,075,401   33.2% of all claim costs of the group
+  26-40     774,412    4.5%
+  41-60     390,742    1.9%
+  61+       287,423    3.3%
+
+Interpretation:
+One single claim makes up a third of all claim costs of drivers aged 18-25.
+Pricing this group on its observed claim cost would essentially price that
+one claim. This is the strongest argument for capping large claims and
+spreading the excess over a wider base.
+*/
+
+------------------------------------------------------------------------
+-- 4.3 PARTITION BY: Bonus-Malus mix within each age group
+------------------------------------------------------------------------
+
+/*
+SUM(policy_years) OVER (PARTITION BY age_group) is the total exposure of the
+age group, repeated on each row of that group. Dividing by it gives the share
+of each Bonus-Malus group within its age group.
+*/
+
+WITH mix AS (
+    SELECT
+        age_group, age_order, bm_group, bm_order,
+        SUM(Exposure) AS policy_years
+    FROM v_policies_rated
+    GROUP BY age_group, age_order, bm_group, bm_order
+),
+shares AS (
+    SELECT
+        *,
+        100 * policy_years / SUM(policy_years) OVER (PARTITION BY age_group) AS share_pct
+    FROM mix
+)
+SELECT
+    age_group,
+    ROUND(SUM(CASE WHEN bm_group = '<=50'    THEN share_pct END), 1) AS "bm <=50 %",
+    ROUND(SUM(CASE WHEN bm_group = '51-64'   THEN share_pct END), 1) AS "bm 51-64 %",
+    ROUND(SUM(CASE WHEN bm_group = '65-80'   THEN share_pct END), 1) AS "bm 65-80 %",
+    ROUND(SUM(CASE WHEN bm_group = '81-100'  THEN share_pct END), 1) AS "bm 81-100 %",
+    ROUND(SUM(CASE WHEN bm_group = '101-125' THEN share_pct END), 1) AS "bm 101-125 %",
+    ROUND(SUM(CASE WHEN bm_group = '>125'    THEN share_pct END), 1) AS "bm >125 %"
+FROM shares
+GROUP BY age_group, age_order
+ORDER BY age_order;
+
+/*
+Results (selection): share of exposure in Bonus-Malus <=50 / 81-100
+  18-25    3.7% / 56.1%
+  26-40   35.0% / 11.5%
+  41-60   78.6% /  3.3%
+  61+     85.9% /  1.7%
+
+Interpretation:
+Age and Bonus-Malus are strongly correlated: more than half of the young
+drivers are in 81-100 (the starting level), while most drivers over 40 have
+reached the minimum. This correlation is why the GLM factors must be read
+"with the other factor held fixed": part of what looks like an age effect
+in a one-way table is in fact a Bonus-Malus effect, and vice versa.
+*/
+
+------------------------------------------------------------------------
+-- 4.4 LAG: frequency increase from one Bonus-Malus group to the next
+------------------------------------------------------------------------
+
+/*
+LAG(x) OVER (ORDER BY ...) returns x from the previous row. Dividing the
+frequency by the frequency of the previous Bonus-Malus group gives the
+relative step between neighbouring groups. LEAD() would return the next row.
+*/
+
+WITH bm_frequency AS (
+    SELECT
+        bm_group,
+        bm_order,
+        SUM(ClaimNb) / SUM(Exposure) AS claim_frequency
+    FROM v_policies_rated
+    GROUP BY bm_group, bm_order
+)
+SELECT
+    bm_group,
+    ROUND(claim_frequency, 4)                                            AS claim_frequency,
+    ROUND(claim_frequency / LAG(claim_frequency) OVER (ORDER BY bm_order), 2)
+                                                                         AS step_vs_previous_group
+FROM bm_frequency
+ORDER BY bm_order;
+
+/*
+Results:
+  <=50      0.0512     -
+  51-64     0.0882   x1.72
+  65-80     0.1029   x1.17
+  81-100    0.1440   x1.40
+  101-125   0.3435   x2.38
+  >125      0.4381   x1.28
+
+Interpretation:
+The biggest steps are leaving the minimum (x1.72) and crossing 100 (x2.38).
+A Bonus-Malus above 100 means a malus, i.e. claims in the recent past, and
+that is the strongest single signal for future claims in the data.
+*/
+
+------------------------------------------------------------------------
+-- 4.5 Window frame: smoothed claim frequency by single year of age
+------------------------------------------------------------------------
+
+/*
+Frequencies per single year of age are noisy. A moving window over 5 ages
+(ROWS BETWEEN 2 PRECEDING AND 2 FOLLOWING) smooths the curve.
+The smoothed frequency is SUM(claims) / SUM(policy years) over the window,
+not AVG(frequency): AVG would give a small age group the same weight as a
+large one, while the ratio of sums weights every age by its exposure.
+The WINDOW clause names the frame once and reuses it.
+*/
+
+WITH by_age AS (
+    SELECT
+        DrivAge,
+        SUM(ClaimNb)  AS claim_count,
+        SUM(Exposure) AS policy_years
+    FROM policies_clean
+    GROUP BY DrivAge
+)
+SELECT
+    DrivAge,
+    ROUND(policy_years, 0)                                     AS policy_years,
+    ROUND(claim_count / policy_years, 4)                       AS claim_frequency,
+    ROUND(SUM(claim_count) OVER w / SUM(policy_years) OVER w, 4) AS smoothed_frequency_5_years
+FROM by_age
+WINDOW w AS (ORDER BY DrivAge ROWS BETWEEN 2 PRECEDING AND 2 FOLLOWING)
+ORDER BY DrivAge;
+
+/*
+Results (smoothed frequency):
+  age 18: 0.239   age 25: 0.104   age 30: 0.074   age 35-40: about 0.069
+  age 45-49: about 0.077   age 55: 0.068   age 60: 0.064   age 70: 0.059
+
+Interpretation:
+- The frequency falls steeply from age 18 to about 30 (experience).
+- Between about 43 and 51 it rises again by 10-15%. A common
+  explanation is that children of the policyholders drive the car as
+  secondary drivers. The coarse age band 41-60 hides this hump, which is
+  why features.py uses finer age bands.
+- After 55 the frequency keeps falling slowly up to about 70.
+- Above about 85 there are only a few hundred policy years per age; the
+  values there are driven by chance.
+Note: the first and last two ages have shorter windows (fewer neighbours).
+*/
+
+------------------------------------------------------------------------
+-- 4.6 PERCENT_RANK: claim amount quantiles and the large-loss threshold
+------------------------------------------------------------------------
+
+/*
+PERCENT_RANK() gives each claim its relative position (0 = smallest,
+1 = largest). The smallest amount with PERCENT_RANK >= p is the empirical
+p-quantile.
+SQLite: there is no PERCENTILE_CONT() as in PostgreSQL; PERCENT_RANK is the
+standard way around it.
+
+The running sum over the claims sorted from the largest down shows which
+share of the total claim amount the largest claims carry.
+*/
+
+-- quantiles of the claim amount
+WITH ranked AS (
+    SELECT
+        ClaimAmount,
+        PERCENT_RANK() OVER (ORDER BY ClaimAmount) AS pct_rank
+    FROM claims_clean
+),
+levels AS (
+    SELECT 0.50 AS p UNION ALL SELECT 0.90 UNION ALL SELECT 0.99
+    UNION ALL SELECT 0.995 UNION ALL SELECT 0.999
+)
+SELECT
+    l.p                                                           AS quantile,
+    (SELECT MIN(r.ClaimAmount) FROM ranked r WHERE r.pct_rank >= l.p) AS claim_amount
+FROM levels l;
+
+-- share of the total claim amount carried by the largest claims
+WITH cumulative AS (
+    SELECT
+        ClaimAmount,
+        ROW_NUMBER() OVER (ORDER BY ClaimAmount DESC) AS claim_rank,
+        SUM(ClaimAmount) OVER (
+            ORDER BY ClaimAmount DESC
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) / (SELECT SUM(ClaimAmount) FROM claims_clean)  AS cumulative_share
+    FROM claims_clean
+)
+SELECT
+    claim_rank                       AS largest_n_claims,
+    ROUND(ClaimAmount, 0)            AS smallest_of_these,
+    ROUND(100 * cumulative_share, 1) AS share_of_total_amount_pct
+FROM cumulative
+WHERE claim_rank IN (3, 26, 261, 2607);
+
+-- claims above the threshold of 50,000 used in validation.py and features.py
+SELECT
+    COUNT(*)                                                    AS claims_above_50000,
+    ROUND(100.0 * COUNT(*) / (SELECT COUNT(*) FROM claims_clean), 2) AS share_of_claims_pct,
+    ROUND(100 * SUM(ClaimAmount - 50000)
+              / (SELECT SUM(ClaimAmount) FROM claims_clean), 1)  AS excess_share_of_amount_pct
+FROM claims_clean
+WHERE ClaimAmount > 50000;
+
+/*
+Results:
+- median 1,172; 90%: 2,752; 99%: 16,364; 99.5%: 34,463; 99.9%: 152,333
+- the 3 largest claims (0.01% of claims) carry 11.5% of the total amount,
+  the largest 0.1% (26 claims) 21.7%, the largest 1% (261 claims) 38.2%,
+  the largest 10% (2,607 claims) 60.0%
+- 86 claims (0.33%) lie above 50,000; the part above 50,000 is 22.8% of
+  the total claim amount
+
+Interpretation:
+The distribution is extremely skewed. A threshold of 50,000 lies between
+the 99.5% and the 99.9% quantile: it leaves 99.7% of the claims untouched,
+but removes the part of the claim amount (23%) that is too volatile to be
+attributed to individual tariff cells. That part is still charged, as a
+loading spread over the portfolio.
+*/
+
+------------------------------------------------------------------------
+-- 4.7 NTILE: lift chart and Gini index of the age x Bonus-Malus tariff
+------------------------------------------------------------------------
+
+/*
+How well does a simple tariff (the observed frequency of the policy's
+age x Bonus-Malus cell) separate good from bad risks?
+
+Lift chart: NTILE(10) sorts the policies by their cell frequency and splits
+them into 10 groups of equal policy count. A good tariff shows observed
+frequencies rising steeply from group 1 to 10.
+
+Policies of the same cell have the same score. To split a large cell at a
+decile boundary without bias, ties are broken by a fixed pseudo-random
+number derived from IDpol. Breaking ties by IDpol itself would be biased:
+IDpol is not random, low policy numbers have a clearly higher frequency
+(0.086 in the lowest fifth vs 0.063-0.067 in the upper three fifths).
+
+SQLite: RANDOM() would change with every run; the expression
+(IDpol * 7919) % 1000003 is a reproducible substitute.
+Note: NTILE builds groups of equal POLICY COUNT; validation.py uses groups
+of equal EXPOSURE, so the two lift charts differ slightly.
+*/
+
+WITH cell AS (
+    SELECT
+        age_group, bm_group,
+        SUM(ClaimNb) / SUM(Exposure) AS cell_frequency
+    FROM v_policies_rated
+    GROUP BY age_group, bm_group
+),
+scored AS (
+    SELECT
+        p.Exposure,
+        p.ClaimNb,
+        c.cell_frequency,
+        NTILE(10) OVER (ORDER BY c.cell_frequency, (p.IDpol * 7919) % 1000003) AS decile
+    FROM v_policies_rated p
+    INNER JOIN cell c
+        ON c.age_group = p.age_group
+       AND c.bm_group  = p.bm_group
+)
+SELECT
+    decile,
+    COUNT(*)                                             AS policy_count,
+    ROUND(SUM(Exposure), 0)                              AS policy_years,
+    ROUND(SUM(ClaimNb) / SUM(Exposure), 4)               AS observed_frequency,
+    ROUND(SUM(cell_frequency * Exposure) / SUM(Exposure), 4) AS tariff_frequency
+FROM scored
+GROUP BY decile
+ORDER BY decile;
+
+/*
+Gini index from the ordered Lorenz curve:
+cells are sorted from the lowest to the highest frequency; the curve plots
+the cumulative share of policy years (x) against the cumulative share of
+claims (y). The area under the curve is summed with the trapezoidal rule,
+using LAG() for the previous point: area = sum of dx * (y + y_previous) / 2.
+Gini = 1 - 2 * area. 0 = no ranking power, larger = better separation.
+*/
+
+WITH cell AS (
+    SELECT
+        age_group, bm_group,
+        SUM(Exposure)                AS policy_years,
+        SUM(ClaimNb)                 AS claim_count,
+        SUM(ClaimNb) / SUM(Exposure) AS cell_frequency
+    FROM v_policies_rated
+    GROUP BY age_group, bm_group
+),
+lorenz AS (
+    SELECT
+        SUM(policy_years) OVER w / (SELECT SUM(policy_years) FROM cell)     AS x,
+        SUM(claim_count)  OVER w * 1.0 / (SELECT SUM(claim_count) FROM cell) AS y
+    FROM cell
+    WINDOW w AS (ORDER BY cell_frequency ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+),
+trapezoids AS (
+    SELECT
+        x - COALESCE(LAG(x) OVER (ORDER BY x), 0) AS dx,
+        y + COALESCE(LAG(y) OVER (ORDER BY x), 0) AS y_sum
+    FROM lorenz
+)
+SELECT
+    ROUND(1 - SUM(dx * y_sum), 4) AS gini_index
+FROM trapezoids;
+
+/*
+Results:
+- lift: observed frequency rises from 0.043 (decile 1) to 0.178 (decile 10);
+  observed and tariff frequency agree within about 0.003 in every decile
+- Gini index: 0.255
+
+Interpretation:
+The age x Bonus-Malus table separates risks clearly: the worst tenth of the
+policies has four times the frequency of the best tenth. The Gini of 0.255
+is computed on the same data the cell frequencies come from (in-sample);
+validation.py measures the base model out-of-sample on a test set and gets
+0.254, so this simple tariff hardly overfits. The extended model in
+features.py reaches 0.289 out-of-sample.
+
+Unexpected finding on the way: the policy number is related to the claim
+frequency. This confirms that a random train/test split (as in
+validation.py) is necessary; a split by ranges of policy numbers would put
+systematically different risks into training and test data.
+*/
+
+------------------------------------------------------------------------
+-- 4.8 Time series analyses
+------------------------------------------------------------------------
+
+/*
+Year-on-year comparisons with LAG(), moving averages over time or run-off
+triangles would need dates (policy start, accident date, payment date).
+freMTPL2 contains no date or year column, so these analyses are not
+possible with this data. The window techniques of this chapter (LAG,
+moving frames) are the same ones that such analyses would use.
+*/
