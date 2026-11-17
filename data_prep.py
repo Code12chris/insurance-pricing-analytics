@@ -1,8 +1,14 @@
 """Data loading, consistency checks and cleaning for freMTPL2.
 
-Same cleaning rules as the data-consistency section in main.py:
-claim counts (ClaimNb) and claim amounts must describe the same claims.
+Claim counts (ClaimNb in the policy table) and claim amounts (rows in the
+claims table) must describe the same claims, otherwise frequency x severity
+does not match the observed claim cost. consistency_report() documents why
+the data is cleaned, clean() applies the rules. The same rules are
+implemented in SQL (policies_analysis.sql, chapter 2) and compared by
+check_sql_cleaning.py.
 """
+import sqlite3
+
 import numpy as np
 import pandas as pd
 
@@ -20,14 +26,80 @@ def load_raw(data_dir="data"):
     return policies, claims
 
 
+def write_sqlite(policies, claims, db_path="insurance.db"):
+    """Store the raw tables in SQLite (used by policies_analysis.sql) and read them back."""
+    with sqlite3.connect(db_path) as con:
+        policies.to_sql("policies", con, if_exists="replace", index=False)
+        claims.to_sql("claims", con, if_exists="replace", index=False)
+        policies = pd.read_sql_query("SELECT * FROM policies", con)
+        claims = pd.read_sql_query("SELECT * FROM claims", con)
+    print(f"SQLite database {db_path}: tables policies ({len(policies):,} rows) "
+          f"and claims ({len(claims):,} rows)")
+    return policies, claims
+
+
+def consistency_report(policies, claims):
+    """Print the checks that motivate the cleaning rules.
+
+    Findings (the numbers are printed by this function):
+    - The sum of ClaimNb is about 1.35 times the number of claim amounts.
+    - Almost all claims without an amount sit in one block at the start of the
+      data: all policies before the first claim-free policy have a claim, but
+      hardly any amount, and an implausible frequency of about 2 per year.
+      Outside the block counts and amounts match for more than 99.9%.
+    - The claims without a policy belong to only a handful of policy numbers
+      with dozens of claims each; their neighbouring numbers exist, so these
+      are gaps in the policy table. Together with several policies with more
+      than 4 claims and identical driver profiles this points to fleets, which
+      are not individual risks.
+    """
+    n_amounts = claims.groupby("IDpol").size()
+    amounts_per_policy = policies["IDpol"].map(n_amounts).fillna(0)
+    block_end = policies.loc[policies["ClaimNb"] == 0, "IDpol"].min()
+    in_block = policies["IDpol"] < block_end
+
+    print(f"sum of ClaimNb: {policies['ClaimNb'].sum():,} | claim amounts: {len(claims):,} "
+          f"| ratio {policies['ClaimNb'].sum() / len(claims):.3f}")
+
+    segments = pd.DataFrame({
+        "policies": [in_block.sum(), (~in_block).sum()],
+        "policy_years": [policies.loc[in_block, "Exposure"].sum(),
+                         policies.loc[~in_block, "Exposure"].sum()],
+        "ClaimNb": [policies.loc[in_block, "ClaimNb"].sum(),
+                    policies.loc[~in_block, "ClaimNb"].sum()],
+        "claims_with_amount": [amounts_per_policy[in_block].sum(),
+                               amounts_per_policy[~in_block].sum()]},
+        index=[f"block IDpol < {block_end:.0f}", "rest of portfolio"])
+    segments["share_with_amount"] = segments["claims_with_amount"] / segments["ClaimNb"]
+    segments["frequency"] = segments["ClaimNb"] / segments["policy_years"]
+    print(segments.round(4))
+
+    orphan = claims[~claims["IDpol"].isin(policies["IDpol"])]
+    ids = set(policies["IDpol"])
+    by_id = orphan.groupby("IDpol")["ClaimAmount"].agg(claims="size", total="sum")
+    by_id["neighbours_exist"] = [(i - 1 in ids) and (i + 1 in ids) for i in by_id.index]
+    print(f"\nclaims without a policy: {len(orphan)} on {len(by_id)} policy numbers")
+    print(by_id.sort_values("claims", ascending=False).round(0))
+
+    many = policies[policies["ClaimNb"] > MAX_CLAIMS]
+    print(f"\npolicies with more than {MAX_CLAIMS} claims:")
+    print(many[["IDpol", "ClaimNb", "Exposure", "DrivAge", "BonusMalus", "VehBrand",
+                "Region"]].to_string(index=False))
+    print(f"policies with exposure above 1 year: {(policies['Exposure'] > 1).sum():,}")
+
+
 def clean(policies, claims, verbose=True):
     """Return consistent (policies, claims): sum(ClaimNb) == number of claim rows.
 
     1. Drop the block of claim-only policies at the start of the data
        (all policies before the first claim-free policy; almost no amounts).
+       The WHOLE block goes: dropping only its claim policies would keep the
+       claim-free policies elsewhere and bias the frequency downwards.
     2. Drop remaining policies whose ClaimNb != number of recorded amounts.
     3. Drop policies with more than MAX_CLAIMS claims (likely fleets / errors).
-    4. Cap exposure at 1 year.
+       Dropped instead of capped: capping ClaimNb at 4 would leave up to 16
+       claim amounts for 4 counted claims, i.e. inconsistent again.
+    4. Cap exposure at 1 year (contracts run for at most one year).
     5. Drop claims without a policy and claims of dropped policies.
     """
     policies = policies.copy()
