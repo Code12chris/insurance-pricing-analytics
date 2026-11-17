@@ -1,145 +1,145 @@
 table,age_group,bm_group,pure_premium
-portfolio mix (uniform loading),18-25,<=50,118.4926189936779
-portfolio mix (uniform loading),18-25,51-64,197.88602255272312
-portfolio mix (uniform loading),18-25,65-80,236.99229490538735
-portfolio mix (uniform loading),18-25,81-100,411.28066991458326
-portfolio mix (uniform loading),18-25,101-125,860.9455547506439
-portfolio mix (uniform loading),18-25,>125,1373.9069486650867
-portfolio mix (uniform loading),26-40,<=50,84.60718775076352
-portfolio mix (uniform loading),26-40,51-64,165.06491820742997
-portfolio mix (uniform loading),26-40,65-80,201.99582169667127
-portfolio mix (uniform loading),26-40,81-100,285.7178432464813
-portfolio mix (uniform loading),26-40,101-125,617.6780897115278
-portfolio mix (uniform loading),26-40,>125,1051.2578471007741
-portfolio mix (uniform loading),41-60,<=50,117.66606992203518
-portfolio mix (uniform loading),41-60,51-64,244.7284344338697
-portfolio mix (uniform loading),41-60,65-80,306.37439655415346
-portfolio mix (uniform loading),41-60,81-100,432.11945446036344
-portfolio mix (uniform loading),41-60,101-125,932.8857901323543
-portfolio mix (uniform loading),41-60,>125,1614.9668390916643
-portfolio mix (uniform loading),61+,<=50,116.28161134550548
-portfolio mix (uniform loading),61+,51-64,242.01975979006824
-portfolio mix (uniform loading),61+,65-80,300.1609824371273
-portfolio mix (uniform loading),61+,81-100,431.6789163529294
-portfolio mix (uniform loading),61+,101-125,942.258041950247
-portfolio mix (uniform loading),61+,>125,1641.0629437179718
-portfolio mix (credibility loading),18-25,<=50,132.4544874494334
-portfolio mix (credibility loading),18-25,51-64,221.20273746355815
-portfolio mix (credibility loading),18-25,65-80,264.91686332659145
-portfolio mix (credibility loading),18-25,81-100,459.741465705153
-portfolio mix (credibility loading),18-25,101-125,962.3899205270242
-portfolio mix (credibility loading),18-25,>125,1535.7930496781278
-portfolio mix (credibility loading),26-40,<=50,83.9673931576783
-portfolio mix (credibility loading),26-40,51-64,163.81670697402666
-portfolio mix (credibility loading),26-40,65-80,200.46834113641393
-portfolio mix (credibility loading),26-40,81-100,283.5572616680513
-portfolio mix (credibility loading),26-40,101-125,613.0072442128121
-portfolio mix (credibility loading),26-40,>125,1043.3082968983163
-portfolio mix (credibility loading),41-60,<=50,114.97541890242124
-portfolio mix (credibility loading),41-60,51-64,239.13226884361652
-portfolio mix (credibility loading),41-60,65-80,299.3685827029877
-portfolio mix (credibility loading),41-60,81-100,422.2382486759841
-portfolio mix (credibility loading),41-60,101-125,911.5536414163639
-portfolio mix (credibility loading),41-60,>125,1578.0376531749098
-portfolio mix (credibility loading),61+,<=50,116.16318615401414
-portfolio mix (credibility loading),61+,51-64,241.77327854452835
-portfolio mix (credibility loading),61+,65-80,299.8552881711808
-portfolio mix (credibility loading),61+,81-100,431.2392797006648
-portfolio mix (credibility loading),61+,101-125,941.2984139595354
-portfolio mix (credibility loading),61+,>125,1639.3916287859684
-density_band = 20-55,18-25,<=50,100.63012254102215
-density_band = 20-55,18-25,51-64,168.88904880732142
-density_band = 20-55,18-25,65-80,200.52466096648251
-density_band = 20-55,18-25,81-100,341.6965605764072
-density_band = 20-55,18-25,101-125,719.7317934936385
-density_band = 20-55,18-25,>125,1159.981374596154
-density_band = 20-55,26-40,<=50,72.37594539192153
-density_band = 20-55,26-40,51-64,138.03423569797175
-density_band = 20-55,26-40,65-80,165.37263854063238
-density_band = 20-55,26-40,81-100,229.1638399517774
-density_band = 20-55,26-40,101-125,494.3178484601325
-density_band = 20-55,26-40,>125,849.1312667616835
-density_band = 20-55,41-60,<=50,99.83165914563361
-density_band = 20-55,41-60,51-64,200.04461576583535
-density_band = 20-55,41-60,65-80,247.0226228028818
-density_band = 20-55,41-60,81-100,346.0491625291671
-density_band = 20-55,41-60,101-125,743.1648772764394
-density_band = 20-55,41-60,>125,1316.5744614020728
-density_band = 20-55,61+,<=50,99.28331020103829
-density_band = 20-55,61+,51-64,200.18535798874194
-density_band = 20-55,61+,65-80,246.44519949477603
-density_band = 20-55,61+,81-100,347.7259605958721
-density_band = 20-55,61+,101-125,746.1807014173716
-density_band = 20-55,61+,>125,1235.6310793510431
-density_band = 3000-8100,18-25,<=50,142.5259839423883
-density_band = 3000-8100,18-25,51-64,239.20350338980148
-density_band = 3000-8100,18-25,65-80,284.0101342151406
-density_band = 3000-8100,18-25,81-100,483.9568637713762
-density_band = 3000-8100,18-25,101-125,1019.3814680140481
-density_band = 3000-8100,18-25,>125,1642.9224430464626
-density_band = 3000-8100,26-40,<=50,102.50859852167088
-density_band = 3000-8100,26-40,51-64,195.50274573668563
-density_band = 3000-8100,26-40,65-80,234.22308777915106
-density_band = 3000-8100,26-40,81-100,324.5728112854915
-density_band = 3000-8100,26-40,101-125,700.1197648680633
-density_band = 3000-8100,26-40,>125,1202.6544958456163
-density_band = 3000-8100,41-60,<=50,141.3950921358784
-density_band = 3000-8100,41-60,51-64,283.33022930365485
-density_band = 3000-8100,41-60,65-80,349.8668339259737
-density_band = 3000-8100,41-60,81-100,490.1216070943686
-density_band = 3000-8100,41-60,101-125,1052.5705692355698
-density_band = 3000-8100,41-60,>125,1864.710742732684
-density_band = 3000-8100,61+,<=50,140.61844622808513
-density_band = 3000-8100,61+,51-64,283.5295674669749
-density_band = 3000-8100,61+,65-80,349.04900897395214
-density_band = 3000-8100,61+,81-100,492.49651520632494
-density_band = 3000-8100,61+,101-125,1056.8419870996227
-density_band = 3000-8100,61+,>125,1750.0677821644426
-vehage_band = 0-4,18-25,<=50,127.84105540027986
-vehage_band = 0-4,18-25,51-64,208.18217012322498
-vehage_band = 0-4,18-25,65-80,251.5410754876129
-vehage_band = 0-4,18-25,81-100,448.4133449276435
-vehage_band = 0-4,18-25,101-125,929.3546815616301
-vehage_band = 0-4,18-25,>125,1469.6671095188287
-vehage_band = 0-4,26-40,<=50,90.17052113748808
-vehage_band = 0-4,26-40,51-64,175.8730958455286
-vehage_band = 0-4,26-40,65-80,215.3127418087905
-vehage_band = 0-4,26-40,81-100,308.4168662598237
-vehage_band = 0-4,26-40,101-125,661.5703505965976
-vehage_band = 0-4,26-40,>125,1115.6004834156406
-vehage_band = 0-4,41-60,<=50,125.58394915624437
-vehage_band = 0-4,41-60,51-64,261.7312604021356
-vehage_band = 0-4,41-60,65-80,330.355673429295
-vehage_band = 0-4,41-60,81-100,474.2499485672043
-vehage_band = 0-4,41-60,101-125,1010.3630364265001
-vehage_band = 0-4,41-60,>125,1697.4497579962506
-vehage_band = 0-4,61+,<=50,124.19203390107762
-vehage_band = 0-4,61+,51-64,256.0152499363314
-vehage_band = 0-4,61+,65-80,320.7106815700533
-vehage_band = 0-4,61+,81-100,459.36861106747284
-vehage_band = 0-4,61+,101-125,1019.1896813469647
-vehage_band = 0-4,61+,>125,1782.8989045640365
-vehage_band = 16+,18-25,<=50,85.84326326852988
-vehage_band = 16+,18-25,51-64,139.79106150012868
-vehage_band = 16+,18-25,65-80,168.90588628451695
-vehage_band = 16+,18-25,81-100,301.10252689341877
-vehage_band = 16+,18-25,101-125,624.0470899535544
-vehage_band = 16+,18-25,>125,986.8584094875048
-vehage_band = 16+,26-40,<=50,60.548090445825466
-vehage_band = 16+,26-40,51-64,118.09602495260732
-vehage_band = 16+,26-40,65-80,144.57912853025888
-vehage_band = 16+,26-40,81-100,207.09708758192136
-vehage_band = 16+,26-40,101-125,444.2341124226437
-vehage_band = 16+,26-40,>125,749.1082242750196
-vehage_band = 16+,41-60,<=50,84.3276518327113
-vehage_band = 16+,41-60,51-64,175.74843560197561
-vehage_band = 16+,41-60,65-80,221.82865244384848
-vehage_band = 16+,41-60,81-100,318.4514009405789
-vehage_band = 16+,41-60,101-125,678.4429294735112
-vehage_band = 16+,41-60,>125,1139.8108847312872
-vehage_band = 16+,61+,<=50,83.3930025737339
-vehage_band = 16+,61+,51-64,171.91022424080256
-vehage_band = 16+,61+,65-80,215.35219171060967
-vehage_band = 16+,61+,81-100,308.4588162519007
-vehage_band = 16+,61+,101-125,684.3698830747063
-vehage_band = 16+,61+,>125,1197.1886462173954
+portfolio mix (uniform loading),18-25,<=50,118.49
+portfolio mix (uniform loading),18-25,51-64,197.89
+portfolio mix (uniform loading),18-25,65-80,236.99
+portfolio mix (uniform loading),18-25,81-100,411.28
+portfolio mix (uniform loading),18-25,101-125,860.95
+portfolio mix (uniform loading),18-25,>125,1373.91
+portfolio mix (uniform loading),26-40,<=50,84.61
+portfolio mix (uniform loading),26-40,51-64,165.06
+portfolio mix (uniform loading),26-40,65-80,202.00
+portfolio mix (uniform loading),26-40,81-100,285.72
+portfolio mix (uniform loading),26-40,101-125,617.68
+portfolio mix (uniform loading),26-40,>125,1051.26
+portfolio mix (uniform loading),41-60,<=50,117.67
+portfolio mix (uniform loading),41-60,51-64,244.73
+portfolio mix (uniform loading),41-60,65-80,306.37
+portfolio mix (uniform loading),41-60,81-100,432.12
+portfolio mix (uniform loading),41-60,101-125,932.89
+portfolio mix (uniform loading),41-60,>125,1614.97
+portfolio mix (uniform loading),61+,<=50,116.28
+portfolio mix (uniform loading),61+,51-64,242.02
+portfolio mix (uniform loading),61+,65-80,300.16
+portfolio mix (uniform loading),61+,81-100,431.68
+portfolio mix (uniform loading),61+,101-125,942.26
+portfolio mix (uniform loading),61+,>125,1641.06
+portfolio mix (credibility loading),18-25,<=50,132.45
+portfolio mix (credibility loading),18-25,51-64,221.20
+portfolio mix (credibility loading),18-25,65-80,264.92
+portfolio mix (credibility loading),18-25,81-100,459.74
+portfolio mix (credibility loading),18-25,101-125,962.39
+portfolio mix (credibility loading),18-25,>125,1535.79
+portfolio mix (credibility loading),26-40,<=50,83.97
+portfolio mix (credibility loading),26-40,51-64,163.82
+portfolio mix (credibility loading),26-40,65-80,200.47
+portfolio mix (credibility loading),26-40,81-100,283.56
+portfolio mix (credibility loading),26-40,101-125,613.01
+portfolio mix (credibility loading),26-40,>125,1043.31
+portfolio mix (credibility loading),41-60,<=50,114.98
+portfolio mix (credibility loading),41-60,51-64,239.13
+portfolio mix (credibility loading),41-60,65-80,299.37
+portfolio mix (credibility loading),41-60,81-100,422.24
+portfolio mix (credibility loading),41-60,101-125,911.55
+portfolio mix (credibility loading),41-60,>125,1578.04
+portfolio mix (credibility loading),61+,<=50,116.16
+portfolio mix (credibility loading),61+,51-64,241.77
+portfolio mix (credibility loading),61+,65-80,299.86
+portfolio mix (credibility loading),61+,81-100,431.24
+portfolio mix (credibility loading),61+,101-125,941.30
+portfolio mix (credibility loading),61+,>125,1639.39
+density_band = 20-55,18-25,<=50,100.63
+density_band = 20-55,18-25,51-64,168.89
+density_band = 20-55,18-25,65-80,200.52
+density_band = 20-55,18-25,81-100,341.70
+density_band = 20-55,18-25,101-125,719.73
+density_band = 20-55,18-25,>125,1159.98
+density_band = 20-55,26-40,<=50,72.38
+density_band = 20-55,26-40,51-64,138.03
+density_band = 20-55,26-40,65-80,165.37
+density_band = 20-55,26-40,81-100,229.16
+density_band = 20-55,26-40,101-125,494.32
+density_band = 20-55,26-40,>125,849.13
+density_band = 20-55,41-60,<=50,99.83
+density_band = 20-55,41-60,51-64,200.04
+density_band = 20-55,41-60,65-80,247.02
+density_band = 20-55,41-60,81-100,346.05
+density_band = 20-55,41-60,101-125,743.16
+density_band = 20-55,41-60,>125,1316.57
+density_band = 20-55,61+,<=50,99.28
+density_band = 20-55,61+,51-64,200.19
+density_band = 20-55,61+,65-80,246.45
+density_band = 20-55,61+,81-100,347.73
+density_band = 20-55,61+,101-125,746.18
+density_band = 20-55,61+,>125,1235.63
+density_band = 3000-8100,18-25,<=50,142.53
+density_band = 3000-8100,18-25,51-64,239.20
+density_band = 3000-8100,18-25,65-80,284.01
+density_band = 3000-8100,18-25,81-100,483.96
+density_band = 3000-8100,18-25,101-125,1019.38
+density_band = 3000-8100,18-25,>125,1642.92
+density_band = 3000-8100,26-40,<=50,102.51
+density_band = 3000-8100,26-40,51-64,195.50
+density_band = 3000-8100,26-40,65-80,234.22
+density_band = 3000-8100,26-40,81-100,324.57
+density_band = 3000-8100,26-40,101-125,700.12
+density_band = 3000-8100,26-40,>125,1202.65
+density_band = 3000-8100,41-60,<=50,141.40
+density_band = 3000-8100,41-60,51-64,283.33
+density_band = 3000-8100,41-60,65-80,349.87
+density_band = 3000-8100,41-60,81-100,490.12
+density_band = 3000-8100,41-60,101-125,1052.57
+density_band = 3000-8100,41-60,>125,1864.71
+density_band = 3000-8100,61+,<=50,140.62
+density_band = 3000-8100,61+,51-64,283.53
+density_band = 3000-8100,61+,65-80,349.05
+density_band = 3000-8100,61+,81-100,492.50
+density_band = 3000-8100,61+,101-125,1056.84
+density_band = 3000-8100,61+,>125,1750.07
+vehage_band = 0-4,18-25,<=50,127.84
+vehage_band = 0-4,18-25,51-64,208.18
+vehage_band = 0-4,18-25,65-80,251.54
+vehage_band = 0-4,18-25,81-100,448.41
+vehage_band = 0-4,18-25,101-125,929.35
+vehage_band = 0-4,18-25,>125,1469.67
+vehage_band = 0-4,26-40,<=50,90.17
+vehage_band = 0-4,26-40,51-64,175.87
+vehage_band = 0-4,26-40,65-80,215.31
+vehage_band = 0-4,26-40,81-100,308.42
+vehage_band = 0-4,26-40,101-125,661.57
+vehage_band = 0-4,26-40,>125,1115.60
+vehage_band = 0-4,41-60,<=50,125.58
+vehage_band = 0-4,41-60,51-64,261.73
+vehage_band = 0-4,41-60,65-80,330.36
+vehage_band = 0-4,41-60,81-100,474.25
+vehage_band = 0-4,41-60,101-125,1010.36
+vehage_band = 0-4,41-60,>125,1697.45
+vehage_band = 0-4,61+,<=50,124.19
+vehage_band = 0-4,61+,51-64,256.02
+vehage_band = 0-4,61+,65-80,320.71
+vehage_band = 0-4,61+,81-100,459.37
+vehage_band = 0-4,61+,101-125,1019.19
+vehage_band = 0-4,61+,>125,1782.90
+vehage_band = 16+,18-25,<=50,85.84
+vehage_band = 16+,18-25,51-64,139.79
+vehage_band = 16+,18-25,65-80,168.91
+vehage_band = 16+,18-25,81-100,301.10
+vehage_band = 16+,18-25,101-125,624.05
+vehage_band = 16+,18-25,>125,986.86
+vehage_band = 16+,26-40,<=50,60.55
+vehage_band = 16+,26-40,51-64,118.10
+vehage_band = 16+,26-40,65-80,144.58
+vehage_band = 16+,26-40,81-100,207.10
+vehage_band = 16+,26-40,101-125,444.23
+vehage_band = 16+,26-40,>125,749.11
+vehage_band = 16+,41-60,<=50,84.33
+vehage_band = 16+,41-60,51-64,175.75
+vehage_band = 16+,41-60,65-80,221.83
+vehage_band = 16+,41-60,81-100,318.45
+vehage_band = 16+,41-60,101-125,678.44
+vehage_band = 16+,41-60,>125,1139.81
+vehage_band = 16+,61+,<=50,83.39
+vehage_band = 16+,61+,51-64,171.91
+vehage_band = 16+,61+,65-80,215.35
+vehage_band = 16+,61+,81-100,308.46
+vehage_band = 16+,61+,101-125,684.37
+vehage_band = 16+,61+,>125,1197.19

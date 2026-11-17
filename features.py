@@ -339,7 +339,8 @@ for name, t in tables.items():
     print(t.round(0))
 
 long = pd.concat({name: t.stack() for name, t in tables.items()}, names=["table"])
-long.rename("pure_premium").reset_index().to_csv("tariff_tables.csv", index=False)
+long.rename("pure_premium").reset_index().to_csv(
+    "tariff_tables.csv", index=False, float_format="%.2f")   # cents; avoids float noise in git
 print("\ntariff_tables.csv written")
 
 pairs = [("portfolio mix (uniform loading)", "portfolio mix (credibility loading)")]
