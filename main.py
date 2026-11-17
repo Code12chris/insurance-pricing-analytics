@@ -64,7 +64,121 @@ print(claims.head())
 
 print("---Tabellen-Dimensionen mit Zeilen, Spalten werden angezeigt: ---")
 print(policies.shape)
-print(claims.shape) 
+print(claims.shape)
+
+
+#===============================================================================
+#Datenkonsistenz prüfen und Bestand bereinigen
+#===============================================================================
+
+"""
+Frequenz (ClaimNb in policies) und Schadenhöhe (Zeilen in claims) müssen
+dieselben Schäden beschreiben, sonst passen Frequenz x Schadenhöhe und die
+beobachteten Schadenkosten nicht zusammen (Ursache der früheren
+Portfolio-Abweichung von +31,9 %).
+
+Prüfungen:
+1. Schäden in claims ohne zugehörige Police
+2. Policen, deren ClaimNb nicht zur Anzahl bezifferter Schäden passt
+3. Datenblock am Anfang des Datensatzes: alle Policen bis zur ersten
+   schadenfreien Police haben ClaimNb >= 1, aber kaum Schadenhöhen
+"""
+
+n_sev = claims.groupby("IDpol").size()
+policies["n_sev"] = policies["IDpol"].map(n_sev).fillna(0).astype(int)
+
+orphan_claims = ~claims["IDpol"].isin(policies["IDpol"])
+inconsistent = policies["ClaimNb"] != policies["n_sev"]
+
+# Block: alle Policen vor der ersten schadenfreien Police
+block_end = policies.loc[policies["ClaimNb"] == 0, "IDpol"].min()
+in_block = policies["IDpol"] < block_end
+
+consistency = pd.DataFrame({
+    "policies": [in_block.sum(), (~in_block).sum()],
+    "exposure": [policies.loc[in_block, "Exposure"].sum(),
+                 policies.loc[~in_block, "Exposure"].sum()],
+    "ClaimNb": [policies.loc[in_block, "ClaimNb"].sum(),
+                policies.loc[~in_block, "ClaimNb"].sum()],
+    "claims_with_amount": [policies.loc[in_block, "n_sev"].sum(),
+                           policies.loc[~in_block, "n_sev"].sum()]},
+    index=[f"block IDpol < {block_end:.0f}", "rest of portfolio"])
+consistency["share_with_amount"] = (consistency["claims_with_amount"]
+                                    / consistency["ClaimNb"])
+consistency["frequency"] = consistency["ClaimNb"] / consistency["exposure"]
+
+print("\n--- Datenkonsistenz Frequenz vs. Schadenhöhe ---")
+print(f"Summe ClaimNb: {policies['ClaimNb'].sum()} ; "
+      f"Zeilen in claims: {len(claims)} ; "
+      f"Verhältnis: {policies['ClaimNb'].sum() / len(claims):.3f}")
+print(f"Schäden ohne Police: {orphan_claims.sum()}")
+
+# Wie verteilen sich die Schäden ohne Police auf Policennummern?
+orphan_by_id = (claims[orphan_claims].groupby("IDpol")["ClaimAmount"]
+                .agg(claims="size", total="sum", largest="max")
+                .sort_values("claims", ascending=False))
+policy_ids = set(policies["IDpol"])
+orphan_by_id["neighbours_in_policies"] = [
+    (i - 1 in policy_ids) and (i + 1 in policy_ids) for i in orphan_by_id.index]
+print(f"--> verteilt auf nur {len(orphan_by_id)} Policennummern:")
+print(orphan_by_id.round(0))
+print(f"zum Vergleich: Schäden je Police mit Schaden (zugeordnet): "
+      f"{claims[~orphan_claims].groupby('IDpol').size().mean():.2f}")
+print(f"Policen mit ClaimNb != Anzahl bezifferter Schäden: {inconsistent.sum()}")
+print(consistency.round(4))
+
+"""
+Ergebnis: Fast alle nicht bezifferten Schäden liegen im Block am Anfang des
+Datensatzes. Der Block enthält nur Schadenpolicen (ca. 1,3 % der Exposure,
+aber ca. 27 % aller ClaimNb) mit unplausibler Jahresfrequenz von ca. 2.
+Außerhalb des Blocks passen ClaimNb und bezifferte Schäden zu über 99,9 %.
+
+Die 195 Schäden ohne Police gehören zu nur 6 Policennummern mit je 21-66
+Schäden (normal: ca. 1,06 Schäden je Police mit Schaden). Die direkten
+Nachbarnummern existieren jeweils in policies, es sind also Lücken im
+Policenbestand. Alle 6 liegen im Nummernbereich 2.220.000-2.287.000, in dem
+auch 5 der 8 Policen mit 5-16 Schäden liegen, darunter die mit nahezu
+identischem Profil (Punkt 3 unten)
+--> Hinweis auf Flotten bzw. Sammelverträge, die nicht als Einzelrisiken
+im Datensatz abgebildet sind.
+
+Bereinigung:
+1. Block komplett ausschließen (ganze Policen). Nur die Schadenpolicen ohne
+   Betrag zu streichen würde die Frequenz nach unten verzerren, weil die
+   schadenfreien Policen erhalten blieben.
+2. Übrige Policen mit ClaimNb != Anzahl bezifferter Schäden ausschließen.
+3. Policen mit mehr als 4 Schäden ausschließen: wenige Policen mit bis zu
+   16 Schäden bei teils < 0,1 Jahren Exposure und nahezu identischem Profil
+   -> vermutlich Flotte oder Erfassungsfehler, kein Einzelrisiko.
+   Ausschließen statt Kappen, damit ClaimNb und Schadenhöhen konsistent bleiben.
+4. Exposure > 1 Jahr auf 1 kappen (Policen sind Jahresverträge).
+5. Schäden ohne Police und Schäden ausgeschlossener Policen entfernen.
+"""
+
+keep = (~in_block) & (~inconsistent) & (policies["ClaimNb"] <= 4)
+
+n_pol_raw, n_claims_raw = len(policies), len(claims)
+amount_raw = claims["ClaimAmount"].sum()
+n_exposure_capped = (policies.loc[keep, "Exposure"] > 1).sum()
+
+policies = policies[keep].copy()
+policies["Exposure"] = policies["Exposure"].clip(upper=1.0)
+claims = claims[claims["IDpol"].isin(policies["IDpol"])].copy()
+
+cleaning_summary = pd.DataFrame({
+    "raw": [n_pol_raw, n_claims_raw, round(amount_raw)],
+    "clean": [len(policies), len(claims), round(claims["ClaimAmount"].sum())]},
+    index=["policies", "claims (rows with amount)", "total claim amount"])
+cleaning_summary["removed_share_%"] = (
+    (1 - cleaning_summary["clean"] / cleaning_summary["raw"]) * 100).round(2)
+
+print("\n--- Bereinigung ---")
+print(cleaning_summary)
+print(f"Exposure auf 1 gekappt: {n_exposure_capped} Policen")
+print(f"Konsistenz nach Bereinigung: Summe ClaimNb = {policies['ClaimNb'].sum()}, "
+      f"Zeilen in claims = {len(claims)}")
+
+assert policies["ClaimNb"].sum() == len(claims), "ClaimNb und Schadenzeilen inkonsistent"
 
 
 #===============================================================================
@@ -160,7 +274,7 @@ theo = poisson.pmf(k, mean_claims)
 
 
 #pdDataFrame siehe weiter unten Altersanalyse wegen Dokumentation
-comparison = pd.DataFrame({ 'observed': obs.reindex(k, fill_value=0).values, 
+comparison = pd.DataFrame({ 'observed': obs.reindex(k, fill_value=0).values,
                             'poisson': theo })
 comparison['difference'] = comparison['observed'] - comparison['poisson']
 
@@ -222,10 +336,10 @@ Könnte auf leichte Heterogenität zwischen Risiken hinweisen
 #GroupBy von pandas.pydata.org fuer mehr Details zum Lesen
 #pandas DataFrame dort auch gut dokumentiert
 
-policies['age_group'] = pd.cut( policies['DrivAge'], bins=[17, 25, 40, 60, 100], 
+policies['age_group'] = pd.cut( policies['DrivAge'], bins=[17, 25, 40, 60, 100],
                                 labels=['18-25', '26-40', '41-60', '61+'] )
 
-age_analysis = ( policies .groupby('age_group', observed=True) .agg( contracts=('IDpol', 'count'), 
+age_analysis = ( policies .groupby('age_group', observed=True) .agg( contracts=('IDpol', 'count'),
                 claims=('ClaimNb', 'sum'), exposure=('Exposure', 'sum') ) )
 
 age_analysis['frequency'] = age_analysis['claims'] / age_analysis['exposure']
@@ -237,8 +351,8 @@ age_analysis['relativity'] = age_analysis['frequency'] / portfolio_frequency
 print()
 print(age_analysis.round(4))
 
-#Für 19-25 ist 74% höhere Schadenfreq., da 0.1751/1007 ~ 1.74 und damit
-#stark über Durchschnitt von 10.07% ; anderen Gruppen höchs. 7% Abweichung
+#18-25 hat ca. doppelte Schadenfreq. (0.1487 / 0.0737 ~ 2.02) ;
+#26-40 und 41-60 liegen nahe am Durchschnitt, 61+ ca. 17% darunter
 
 
 #===============================================================================
@@ -248,7 +362,7 @@ print(age_analysis.round(4))
 policies['bm_group'] = pd.cut( policies['BonusMalus'], bins=[0, 50, 64, 80, 100, 125, 1000],
                                 labels=['<=50', '51-64', '65-80', '81-100', '101-125', '>125'] )
 
-bm_analysis = ( policies .groupby('bm_group', observed=True) .agg( contracts=('IDpol', 'count'), 
+bm_analysis = ( policies .groupby('bm_group', observed=True) .agg( contracts=('IDpol', 'count'),
                 claims=('ClaimNb', 'sum'), exposure=('Exposure', 'sum') ) )
 bm_analysis['frequency'] = bm_analysis['claims'] / bm_analysis['exposure']
 
@@ -262,11 +376,11 @@ print()
 print(bm_analysis.round(4))
 
 """
-Gruppe mir bm>100 ist prozent. viel höher als im Portfolio-Durschschnitt mit 4.37
-selbsz im Vergleich zur Altersgruppe ist bm-Schadenfreq. deutlich größer, sollte
-also als Faktor einen viel höheren Einflus haben.
+Gruppen mit bm > 100 liegen weit über dem Portfolio-Durchschnitt (Relativität
+4.66 bzw. 5.94). Selbst im Vergleich zur Altersgruppe ist die Spannweite der
+bm-Schadenfreq. deutlich größer, BM sollte also als Faktor mehr Einfluss haben.
 
-Hohen bm über 100 haben wenig Verträge, man müsste tatsächlichen Einfluss noch 
+Hohen bm über 100 haben wenig Verträge, man müsste tatsächlichen Einfluss noch
 über weitere Analysen untersuchen(zb Konfidenzintervalle etc.)
 
 Scheint Korrel. zwischen bm und tatsä. Risiko zu haben... Sollte man evtl.
@@ -310,7 +424,7 @@ print(glm_data.shape)
 #===============================================================================
 
 poisson_model = smf.glm( formula='ClaimNb ~ age_group + bm_group',
-                data=glm_data, family=sm.families.Poisson(), 
+                data=glm_data, family=sm.families.Poisson(),
                 offset=np.log(glm_data['Exposure']) ).fit()
 
 print(poisson_model.summary())
@@ -319,24 +433,23 @@ print(poisson_model.summary())
 #alter und bm zusammen, die zu ungeahnten effekten führen können
 
 """
-Mit Pearson Chi2 ~ 2.02e+06 und DF Residuals = 678004 kann Deviance-Verhältnis 
-mittels Chi2/(DF Resid.) ~ 2.98 bestimmt werden --> deutl. Overdispersion,
-ideal wäre rund 1 gewesen.
+Pearson Chi2 / DF Residuals liegt über 1 (siehe Ausgabe).
 
-Berücksicht. von Alter und BonusMalus zeigt im Gegensatz zu Gesamtvert. von
-Claims (1.08 Deviance) deutl. Overdispersion --> exit unbeob. Heterogenität
-mit mgl anderen Ursachen evtl. Region, Bevölkerungsdichte etc.
-
--->Ergänzung um weitere Variablen mgl oder auf neg. Binomial wechseln
-
-Beruecksichtung von Alter und BonusMalus zeigt anders als bei gesamtverteil.
-claims(1.08 deviance) deutliche overdsipersion --> unbeobachtete heterogenitaet
-mit mgl anderen ursachen evtl region, bevoelkerungsdichte etc.
+Vorsicht bei der Interpretation: Bei sehr kleinen erwarteten Schadenzahlen
+(kurze Exposure -> mu sehr klein) liefert ein einzelner Schaden einen riesigen
+Beitrag (y - mu)^2 / mu. Der Wert wird daher stark von wenigen Policen mit
+kurzer Exposure getrieben und ist kein verlässlicher Overdispersion-Test.
+Ebenso ignoriert Varianz/Mittelwert = 1.08 von ClaimNb die unterschiedliche
+Exposure. Overdispersion wird deshalb später über ein Negativ-Binomial-
+bzw. Quasi-Poisson-Modell geprüft.
 """
 
+pois_pearson_df = poisson_model.pearson_chi2 / poisson_model.df_resid
+print(f"Poisson: Pearson Chi2 / df = {pois_pearson_df:.3f}")
+
 
 """
-Bsp-Rechnung --- bm group '81-100' hat coef = 0.9590 --> e**coef ~ 2.61 bzw. 161% 
+Bsp-Rechnung --- bm group '81-100' hat coef = 1.188 --> e**coef ~ 3.28 bzw. 228%
 höhere Schadenfreq. als Fahrer mit bm <= 50 und gleichem Alter+Exposure
 """
 
@@ -353,14 +466,15 @@ print(tariffactors.round(3))
 Kann coeff aus GLM in Faktoren mittels Expon. umrechnen, damit Faktoren zur
 Tarifber. für z.B. Altersklassen und dazugehörigen BM-Klassen bei Police
 
-Faktoren sind nun Parameter für Poisson, so z.B. Intercept von 0.070 für
-jährliche Schadenfreq. der Referenzgruppe == 7 Schäden / 100 Vertragsjahre
+Faktoren sind nun Parameter für Poisson, so z.B. Intercept von 0.046 für
+jährliche Schadenfreq. der Referenzgruppe (18-25, bm <= 50)
+== 4,6 Schäden / 100 Vertragsjahre
 
 ---------------------------------------------------------------------------
 
 Bsp. Fahrer A ist in Altersgruppe 26-40 mit BM-Klasse 65-80...
-Das GLM kann nun über Faktoren 0.070 x 0.845 x 1.844 ~ 0.109 zu 
-einer 10,9% erwarteten Schadenfreq. bestimmen.
+Das GLM kann nun über Faktoren 0.046 x 0.815 x 2.375 ~ 0.089 zu
+einer 8,9% erwarteten Schadenfreq. bestimmen.
 
 Andere Faktoren bei anderen Zusammensetzungen berechnen sich analog
 """
@@ -368,8 +482,9 @@ Andere Faktoren bei anderen Zusammensetzungen berechnen sich analog
 
 """
 Fazit: Damit kann Modell Einfluss eines Merkmals bei konstant gehaltenen
-anderen Merkmalen aufzeigen -- aus empir. Ber. hatten wir 1.77 vs. nun
-bestimmten 2.61
+anderen Merkmalen aufzeigen -- empirisch ist die Frequenz von bm '81-100'
+0.1440 / 0.0512 ~ 2.81-mal so hoch wie bei bm <= 50, das GLM schätzt bei
+gleichem Alter 3.28 (Alterseffekt herausgerechnet)
 
 """
 #---------------------------------------------------------------------------
@@ -378,15 +493,18 @@ bestimmten 2.61
 
 #Hier eine Heatmap zu den ergebnissen aus dem GLM für präsent.
 
-# Erwartete Frequenzen aus dem GLM
-heatmap_data = ( glm_data .assign(pred_freq = poisson_model.predict(glm_data) / 
-                glm_data['Exposure']) .groupby(['age_group', 'bm_group'],
-                 observed=True)['pred_freq'] .mean() .unstack() )
+# Erwartete Jahresfrequenzen aus dem GLM
+# predict() auf einem DataFrame ignoriert den Offset (log(Exposure) = 0)
+# und liefert damit direkt die Jahresfrequenz je Police. Ein zusätzliches
+# Teilen durch Exposure wäre falsch und bläht die Werte auf.
+heatmap_data = ( glm_data .assign(pred_freq = poisson_model.predict(glm_data))
+                .groupby(['age_group', 'bm_group'], observed=True)['pred_freq']
+                .mean() .unstack() )
 
 fig2 = plt.figure(figsize=(8,4))
 sns.heatmap( heatmap_data, annot=True, fmt='.3f', cmap='YlOrRd' )
 
-plt.title('expected claims frequency from Poisson-GLM')
+plt.title('expected annual claim frequency from Poisson-GLM')
 plt.xlabel('BonusMalus_group')
 plt.ylabel('age_group')
 pdf_pages.savefig(fig2, dpi=180)
@@ -407,8 +525,8 @@ print(claims["ClaimAmount"].describe())
 
 """
 Schadenhöhe scheint rechtsschief zu sein, da mittelwert >> median ist.
-Einige sehr große Schäden mit ca. 4 Mio auch deutlich höher als die 
-Quantile zu 50% oder 75% mit nur 1222 ---> graf. Vert. untersuchen
+Einige sehr große Schäden mit ca. 4 Mio auch deutlich höher als die
+Quantile zu 50% oder 75% mit nur ca. 1200 ---> graf. Vert. untersuchen
 """
 
 print("\n--- Fehlende Werte ---")
@@ -462,13 +580,13 @@ for t in thresholds:
 
 print()
 print('Top 20 Schäden:')
-print(claims['ClaimAmount'].nlargest(20).round(0).to_list())  
+print(claims['ClaimAmount'].nlargest(20).round(0).to_list())
 
 """
 3 Mio + fast 1 Mio - Werte: 4,1 Mio ; 1,4 Mio ; 1,3 Mio ; 0,77 Mio
 
 Restliche Top 20 zwischen 200k und 400k, damit deutlich unterhalb schwerer Schäden ;
-Sieht realist. aus, da vor allem 'nur 3' Mio-Schäden bei 27000 Schäden gemeldet sind,
+Sieht realist. aus, da vor allem 'nur 3' Mio-Schäden bei ca. 26000 Schäden gemeldet sind,
 sprich viele Schäden typsich und sehr wenige Extremschäden;
 
 Vllt auch falsche Daten gemeldet bei Extrema, andererseits mit 0.011% auch nur
@@ -478,10 +596,10 @@ extreme Ausreißer
 
 """
 Fazit: haben pos. Schadenhöhen ; (stark) rechtsschiefe Vert. Schadenhöhe ;
-Nach log-Trafo nahezu normalverteilt --> lognormal-Vert. ? ; 
+Nach log-Trafo nahezu normalverteilt --> lognormal-Vert. ? ;
 Extremwerte sehr selten, wenn nicht fehlerhafte Daten
 
-Erstmal Gamma-GLM probieren (standard) , dann wenn extremwerte zu stark 
+Erstmal Gamma-GLM probieren (standard) , dann wenn extremwerte zu stark
 verzerren auf lognormal-modell wechseln
 
 """
@@ -492,11 +610,11 @@ verzerren auf lognormal-modell wechseln
 #===============================================================================
 
 """
-Nun Schadenhöhe mit Datensatz genauer analysieren und neben Schadenfreq. für 
+Nun Schadenhöhe mit Datensatz genauer analysieren und neben Schadenfreq. für
 zweite Säule berücksichtigen. Es werden nur pos. Schäden berücksichtigt
 
 Nun Analyse welche Gruppe die schweren Schäden verursacht. Im ersten Teil
-bei Poisson-GLM haben wir Freq. und die Gruppen untersucht, die höhere 
+bei Poisson-GLM haben wir Freq. und die Gruppen untersucht, die höhere
 Schadenhäufigkeit verursachten. Jetzt können wir prüfen, ob zb auch junge
 Fahrer die teuren Schäden verursachen oder eine andere Gruppe.
 
@@ -520,7 +638,7 @@ print(severity_data[['ClaimAmount', 'age_group', 'bm_group']].describe())
 
 """
 Hier nochmal prüfen: Ob Anzahl Schäden, neg. Schadenhöhe und fehlende
-ClaimAmount vorliegen --> 26639, 0, 0
+ClaimAmount vorliegen --> 26065 (nach Bereinigung), 0, 0
 
 Alles ok
 
@@ -564,14 +682,14 @@ print()
 Beobachtungen:
 
 1. Mediane fast alle identisdch, dh typische Schäden in allen
-Altersgruppen nahezu gleich 
+Altersgruppen nahezu gleich
 
 
 2. Mittelwerte unterscheiden sich aber stark, es sieht aktuell so aus,
 dass junge Fahrer viel teure Schäden verursachen. Genauere Analysen
 sollen zeigen, ob sich das bewahrheitet.
 
---> Rechte Tail wiegt schwer und zieht Mittelwert bei '18-25' massiv 
+--> Rechte Tail wiegt schwer und zieht Mittelwert bei '18-25' massiv
 nach oben
 
 --> evtl nur wenige extreme Ausreißer in dieser Altersklasse, die
@@ -597,9 +715,9 @@ print()
 
 """
 Bei Altersgruppe '18-25' steigt Schadenhöhe bei höherwerdenen Quantilen
-im Vergleich zu älteren Gruppen immer stärker an. 
+im Vergleich zu älteren Gruppen immer stärker an.
 
-Besonders starker Anstieg bei 99% Perzentil zu sehen. 
+Besonders starker Anstieg bei 99% Perzentil zu sehen.
 """
 
 #tabelle zur rel Zunahme der Schadenhöhe
@@ -621,7 +739,7 @@ print()
 
 fig4, ax4 = plt.subplots(figsize=(8,4))
 
-growth[["75_vs_50", "90_vs_75", "95_vs_90", 
+growth[["75_vs_50", "90_vs_75", "95_vs_90",
         "99_vs_95"]].plot( kind="bar", ax=ax4 )
 
 plt.ylabel("relative growth")
@@ -635,23 +753,23 @@ plt.close(fig4)
 #-----------------------------------------------------------------
 
 """
-Fazit: Typische Schäden (bis zu 90% Quantil) sind nahezu ident. bei 
-allen Altersgruppen. Bei großen Schäden (90%-95%) sind ähnliche Sprünge 
+Fazit: Typische Schäden (bis zu 90% Quantil) sind nahezu ident. bei
+allen Altersgruppen. Bei großen Schäden (90%-95%) sind ähnliche Sprünge
 zu sehen, aber Gruppe 18-25 etwas höher
 
-Der Extreme Tail ab 95% nimmt enorm zu bei Gruppe 18-25 und auch ein 
+Der Extreme Tail ab 95% nimmt enorm zu bei Gruppe 18-25 und auch ein
 bisschen bei 61+. Aber vor allem 18-25 hat enorme Abweichung.
 
 Mit dem tail_ratio sieht man die Zunahme deutlicher und ebenso mit
 der Tabelle für rel. Zuwachs.
 
 Der Mittelwert wird haupt. durch wenige sehr große Schäden nach oben
-gezogen. Es sind also extreme Ausreißer bei jungen Fahrern, die 
+gezogen. Es sind also extreme Ausreißer bei jungen Fahrern, die
 Mittelwert extrem nach oben treiben.
 """
 
 #kennzahl um spannweite zu tail zu beziffern
-tail_ratio = (age_quant[0.99] / age_quant[0.50]).round(1) 
+tail_ratio = (age_quant[0.99] / age_quant[0.50]).round(1)
 print(tail_ratio)
 
 #-----------------------------------------------------------------
@@ -670,18 +788,18 @@ Mediane sind konstant, also typische Schadenhöhe unterscheidet sich
 nicht durch BM-Klassen.
 
 
-Mittelwerte unterscheiden sich deutlich: 
+Mittelwerte unterscheiden sich deutlich:
 
-'bm 101-125' -- 1844.08 vs. 'bm <= 50' -- 1922.22 
-vs. 'bm > 125' -- 3339.58
+'bm 101-125' -- 1845.76 vs. 'bm <= 50' -- 1912.37
+vs. 'bm 81-100' -- 3863.00 vs. 'bm > 125' -- 3339.58
 
 Tabelle zeigt, dass gerade im rechten Tail die Werte hoch sind
-und Vermutung von früher stützen. Ausnahme hier 'bm 101-125' die 
+und Vermutung von früher stützen. Ausnahme hier 'bm 101-125' die
 deutlich tiefer liegt.
 
 --> nicht monotoner Zshg. zwischen BM-Klassem und Severity
 
-Bemerkung: Bei 'bm > 125' gibt es nur 163 Schäden, also viel 
+Bemerkung: Bei 'bm > 125' gibt es nur 163 Schäden, also viel
 weniger Daten und damit ein unsicherer/sensitiver Mittwert.
 """
 
@@ -709,13 +827,13 @@ print()
 Beobachtung:
 
 Bis zum 95% Quantil sind die Zuwächse bei den BM-Klassen(Ausnahme >125)
-sehr ähnlich. Der Tail scheint auch hier extrem zu wirken. 
+sehr ähnlich. Der Tail scheint auch hier extrem zu wirken.
 
-Gerade im 99%-Quantil sind Zuwächse von x3 , x4.11 und bei 'bm > 125'sogar
-x6.72 aufgetreten. 
+Gerade im 99%-Quantil sind Zuwächse von x3.1 bis x4.1 und bei 'bm > 125'
+sogar x6.72 aufgetreten. 
 
 
-Aber auch hier wieder, es gibt bei höchsten BM-Klasse nur 162 Schäden, also
+Aber auch hier wieder, es gibt bei höchsten BM-Klasse nur 163 Schäden, also
 wieder Sensitivität mgl.
 """
 
@@ -726,7 +844,7 @@ Analyse bisher:
 
 1. Typischer Schaden -- Alter und BM-Klassen unterscheiden sich kaum.
 
-2. Erwartete Schadenhöhe -- Unterschiede vorhanden, teilweise sehr 
+2. Erwartete Schadenhöhe -- Unterschiede vorhanden, teilweise sehr
 verschiedene Reaktionen/Einfluss der Faktoren von zb Alter / BM
 
 3. Gründe für Unterschiede -- Rechter Tail beeinflusst stast. Merkmale
@@ -745,13 +863,14 @@ deutlich
 gamma_model = smf.glm(
     formula="ClaimAmount ~ age_group + bm_group",
     data=severity,
-    family=sm.families.Gamma(link=sm.families.links.log())
+    family=sm.families.Gamma(link=sm.families.links.Log())
     ).fit()
 
 print(gamma_model.summary())
 
-#Im Modell wurden 195 Schäden rausgerechnet, kann an fehlenden Einträgen
-#in Daten bspw bm oder age_group liegen --> aufklären...
+#Früher wurden hier 195 Schäden ohne zugehörige Police vom Modell
+#ausgeschlossen. Nach der Bereinigung (Abschnitt Datenkonsistenz) hat jeder
+#Schaden eine Police --> Kontrolle, dass keine Merkmale fehlen:
 
 #Fehlende Werte / Null-Daten aufspüren
 print("Severity gesamt:", len(severity))
@@ -764,12 +883,9 @@ print(severity[severity[["age_group", "bm_group"]].isna()
 print()
 
 """
-Die letzte Tabelle zeigt, dass 195 Verträge für age_group und
-bm_group nicht vorhanden sind. Es ist jetzt unklar, warum diese
-Verträge keine Merkmale haben.
-
-Aber da 195/26639 ~ 0.73% einen kleinen Teil ausmachen, kann man
-erstmal ohne weitermachen, was statsmodels im GLM autom. gemacht hat
+Ursprünglich fehlten für 195 Schäden age_group und bm_group, weil ihre
+IDpol nicht in policies vorkommt. Diese Schäden werden jetzt bei der
+Bereinigung entfernt, die Tabelle oben ist daher leer.
 """
 
 #-------------------------------------------------------------------
@@ -778,13 +894,18 @@ erstmal ohne weitermachen, was statsmodels im GLM autom. gemacht hat
 Nach dem Berechnen druch Gamma-GLM mit Referenzgruppe 18-25 & bm <= 50
 sind die jungen Fahrer mit '18-25' die Gruppe mit höchster Severity.
 
-Vgl. '26-40' haben 47,4% ; '41-60' hat 40,8% ; '61+' hat 51,3% im Bezug
+Vgl. '26-40' haben 47,3% ; '41-60' hat 40,5% ; '61+' hat 51,4% im Bezug
 zur Referenzgruppe mit ähnlichen Werten wie die deskrip. Analyse durch
 empir. Mittelwerte
 
+Achtung: Die drei Schäden über 1 Mio (4,08 Mio ; 1,40 Mio ; 1,30 Mio) gehören
+alle zu Fahrern von 18-20 Jahren mit bm 100. Ohne sie läge die mittlere
+Schadenhöhe von 18-25 bei ca. 2.300 statt ca. 5.100. Der hohe Severity-Faktor
+junger Fahrer hängt also an drei Einzelschäden --> Großschadenbehandlung nötig.
+
 BM-Klassen haben sehr geringe Koeffizienten und p-Werte (Annahme das jew.
-Koeff. tatsächlich 0). Mit p < 0,05 statis. Signifikanz des Zshg und 
-Widerspruch gegen Nullhypothese. Hier aber alles über 0,231 (siehe
+Koeff. tatsächlich 0). Mit p < 0,05 statis. Signifikanz des Zshg und
+Widerspruch gegen Nullhypothese. Hier aber alles über 0,13 (siehe
 P >|z| in Tabelle)
 
 """
@@ -811,21 +932,21 @@ print(compare)
 
 
 """
-Beobachtung: 
+Beobachtung:
 
 Das Modell kann höhere Severity bei 18-25 erkennen, kann aber
-unterschied. Werte durch BM-Klassen kaum nachvollziehen. Da die 
+unterschied. Werte durch BM-Klassen kaum nachvollziehen. Da die
 BM-Klassen im GLM nicht statist. signifikant waren --> logisch
 
 Es gibt bei größeren Gruppen deutlich bessere Übereinstimmung.
-Die extremen Abweichungen sind vor allem bei Gruppen mit sehr 
-wenig Schäden bspw. Alter '41-60' + 'bm >125' + '33' Schäden, 
-da dort beobach = 2449 vs. model = 1942
+Die extremen Abweichungen sind vor allem bei Gruppen mit sehr
+wenig Schäden bspw. Alter '41-60' + 'bm >125' + '33' Schäden,
+da dort beobach = 2449 vs. model = 1929
 
-Die Kombination Alter '18-25' + 'bm 81-100' hat mit '1498' Schäden
+Die Kombination Alter '18-25' + 'bm 81-100' hat mit '1492' Schäden
 große Stichprobe, das Modell schätzt hier sehr weit nach unten.
-Das ist eine besondere Ausnahme und zeigt Probleme auf, beim 
-vollständigen Erfassen der kompl. Struktur
+Grund: In dieser Zelle liegen alle drei Schäden über 1 Mio. Das Modell
+verteilt deren Effekt über die Altersgruppe 18-25 und die bm-Klasse.
 
 
 Vllt. sind Alter + BM-Klassen zu grobe Merkmale und es müssen für
@@ -899,11 +1020,11 @@ lognormal_model = smf.ols(
 print(lognormal_model.summary())
 
 """
-Beobachtung: 
+Beobachtung:
 
 Referenzgruppe bei BM war <= 50 und im Vergleich dazu waren die anderen
 BM-Klassen durch geringe p-Werte statist. signifikant. Ob dieses 'gute'
-Abbilden des Merkmals nachher auch die Schadenhöhen im Vergleich zum 
+Abbilden des Merkmals nachher auch die Schadenhöhen im Vergleich zum
 Gamma-GLM gut abschätzt muss später geprüft werden.
 """
 
@@ -941,12 +1062,12 @@ print()
 
 #----------------------------------------------------------------------------------
 """
-In den nächsten Schritten word geprüft, wie sehr das Lognormal-Modell 
-die beobachteten Werte approx. und ob es damit ein besseres Modell 
+In den nächsten Schritten word geprüft, wie sehr das Lognormal-Modell
+die beobachteten Werte approx. und ob es damit ein besseres Modell
 darstellt.
 
 Es soll im Vgl. zum Gamma-GLM die Abweichungen geringer halten und die
-Effekte der Extremschäden zumindest teilweise erfassen. 
+Effekte der Extremschäden zumindest teilweise erfassen.
 """
 
 # Vorhergesagte Werte auf der Log-Skala
@@ -986,7 +1107,7 @@ Es wird aber auch nicht eine große Güte bestätigt.
 #----------------------------------------------------------------------------------
 
 #Histogramm der Residuen erstellen
-#Kann von Glockenkurve abweichen, sollte aber annährend 
+#Kann von Glockenkurve abweichen, sollte aber annährend
 #getroffen werden
 
 fig8=plt.figure(figsize=(8, 5))
@@ -1008,9 +1129,9 @@ Wieder eine annährende Normalverteilung, aber starke Häufung bei
 #----------------------------------------------------------------------------------
 
 """
-Hier kommt der Q-Q-Plot(quantile-quantile-plot) zum Prüfen der 
-Normalverteilung der Residuen, idealerweise sollten die Punkte 
-ungefähr auf einer Diagonalen liegen. 
+Hier kommt der Q-Q-Plot(quantile-quantile-plot) zum Prüfen der
+Normalverteilung der Residuen, idealerweise sollten die Punkte
+ungefähr auf einer Diagonalen liegen.
 
 Der extreme rechte Tail könnte für Ausreißer sorgen an den Rändern
 des Q-Q-Plots.
@@ -1019,12 +1140,12 @@ des Q-Q-Plots.
 
 #print(severity["log_resid"].isna().sum())
 #print(np.isinf(severity["log_resid"]).sum())
-#Es gibt 195 NaN-Werte die vom Modell ausgeschlossen wurden,
-#aber im DataFrame noch enthalten sind
+#Nach der Bereinigung gibt es keine NaN-Werte mehr,
+#der Filter unten bleibt als Absicherung
 
 
 
-#Entferne 195 NaN-Werte vor Übergabe an Q-Q-Plot
+#Nicht-endliche Werte vor Übergabe an Q-Q-Plot entfernen
 #Q-Q-Plot erstellen
 
 resid = severity["log_resid"]
@@ -1041,9 +1162,9 @@ plt.close()
 
 """
 Beobachtung: Der Plot verläuft entlang der Idealinie als
-eine S-Kurve und zeigt damit Abweichungen auf. Es scheint 
-also eine systematische Abweichung von der Normalverteilung 
-zu geben, wobei die Stärke dieser Abweichungen noch nicht 
+eine S-Kurve und zeigt damit Abweichungen auf. Es scheint
+also eine systematische Abweichung von der Normalverteilung
+zu geben, wobei die Stärke dieser Abweichungen noch nicht
 feststeht.
 """
 
@@ -1073,7 +1194,7 @@ Die Residuen haben ähnliche Werte egal bei welcher Schadenhöhe.
 
 """
 Fazit: Es gibt Abweichungen von Normalverteilung wie im Q-Q-Plot zu sehen.
-Die Residuen scheinen auf keine besonderen Verzerrungen und falschen Fit 
+Die Residuen scheinen auf keine besonderen Verzerrungen und falschen Fit
 hinzudeuten.
 
 Als nächstes sollten die beiden bisherigen Modelle Gamma-GLM und Lognormal
@@ -1099,7 +1220,7 @@ severity["lognormal_pred"] = np.exp(
     lognormal_model.fittedvalues + sigma2 / 2)
 
 print(severity[["ClaimAmount", "lognormal_pred"]].head())
-#Zwar zu hoch, aner wir haben noch keine Durschnittswerte 
+#Zwar zu hoch, aner wir haben noch keine Durschnittswerte
 #betrachtet. Wir müssen aber diese vergleichen
 
 # Gamma-Vorhersagen auf Euro-Skala
@@ -1133,11 +1254,11 @@ print(age_comparison)
 print()
 
 """
-Beim Vergleich der Altersgruppen ist Gamma-GLM 
+Beim Vergleich der Altersgruppen ist Gamma-GLM
 in jeder Gruppe die bessere Wahl und trifft alle
 Gruppen ziemlich gut.
 
-Das Lognormal-Modell scheint zu viele Gruppen zu 
+Das Lognormal-Modell scheint zu viele Gruppen zu
 unterschätzen und eine Art 'Glättung' über alle
 Gruppen hinweg vorzunehmen.
 """
@@ -1157,21 +1278,37 @@ print()
 
 """
 Ähnlich wie bei den Altersgruppen, kann Gamma-GLM
-auch hier in jeder Gruppe die beobachteten Werte 
+auch hier in jeder Gruppe die beobachteten Werte
 deutlich besser treffen (Ausnahme BM 101-125).
 
 Gamma ist also gegenüber Lognormal überlegen für
-Schadenhöhe, auch wenn statist. Signifikanz von BM 
+Schadenhöhe, auch wenn statist. Signifikanz von BM
 durch Lognormal deutlicher rausgearbeitet wurde.
 
 Fazit: Bessere statist. Signifikanz eines Merkmals
-bedeutet nicht eine gute Approximation der 
+bedeutet nicht eine gute Approximation der
 Schadenhöhe.
 
 """
 
 #-----------------------------------------------------------------------------------
 #Die beiden Vgl.-Tabellen in PDF gespeichert
+
+#WMRAE vorab berechnen, damit die Plots den berechneten Wert zeigen
+#(Definition und Interpretation weiter unten im Abschnitt Modellgüte)
+def wmrae(comparison, pred_col="gamma_mean"):
+    """Gewichteter mittlerer relativer absoluter Fehler in %,
+    Gewicht = Anteil der Schäden je Gruppe, Fehler relativ zum beobachteten Mittel."""
+    weights = comparison["count"] / comparison["count"].sum()
+    rel_error = ((comparison[pred_col] - comparison["observed_mean"])
+                 / comparison["observed_mean"]).abs()
+    return (weights * rel_error).sum() * 100
+
+age_wmrae = wmrae(age_comparison)
+bm_wmrae = wmrae(bm_comparison)
+
+wmrae_formula = (r"$WMRAE=\sum_g w_{g}\left|\frac{\hat{y}_{g}-y_{g}}{y_{g}}\right|$,"
+                 r"  $w_g$ = share of claims, $y_g$ = observed mean")
 
 #Altersgruppen-Vgl
 fig10, ax = plt.subplots(figsize=(7, 2.5))
@@ -1185,8 +1322,7 @@ table = ax.table(
 table.scale(1.2, 1.4)
 fig10.text(
     0.02, 0.05,
-    r"$WMRAE=\sum w_{g}\left|\frac{y_{g}-y_{o}}{y_{g}}\right|$"
-    "\nWMRAE (Age Groups) = 1.13%",
+    wmrae_formula + f"\nWMRAE Gamma (age groups) = {age_wmrae:.2f}%",
     fontsize=11
 )
 
@@ -1207,8 +1343,7 @@ table = ax.table(
 table.scale(1.2, 1.4)
 fig11.text(
     0.02, 0.05,
-    r"$WMRAE=\sum w_{g}\left|\frac{y_{g}-y_{o}}{y_{g}}\right|$"
-    "\nWMRAE (Bonus-Malus Groups) = 3.06%",
+    wmrae_formula + f"\nWMRAE Gamma (Bonus-Malus groups) = {bm_wmrae:.2f}%",
     fontsize=11
 )
 
@@ -1224,7 +1359,7 @@ Damit ist entschieden, dass Gamma-Modell als Basismodell
 für die Schadenhöhe zu wählen.
 
 Ob Gesamtmittel, Mittel nach Altersgruppen oder BM-Klassen
-in jedem Bereich war Gamma immer näher an den beobachteten 
+in jedem Bereich war Gamma immer näher an den beobachteten
 Werten als Lognormal.
 
 Der extreme Tail wurde in beiden Modellen zwar nicht gut
@@ -1255,8 +1390,8 @@ print(age_comparison)
 
 """
 In allen Altersgruppen ist die proz. Abweichung kleiner als 6%, wobei
-nur die junge Altersgruppe '18-25' unterschätzt wird mit -5,75%. Das 
-kann man vermutlich auf den Heavy-Tail zurückführen.
+nur die junge Altersgruppe '18-25' unterschätzt wird mit -5,77%. Das
+liegt an den drei Mio-Schäden in dieser Gruppe (Heavy Tail).
 
 Insgesamt sehr gut getroffen und geringe Abweichungen.
 """
@@ -1269,13 +1404,13 @@ print(bm_comparison)
 Bei den BM-Klassen werden die niedirgen BM-Klassen sehr gut getroffen,
 wohingegen die höheren Klassen leider deutlich schlechter approx. werden.
 
-Die drei höchsten Klassen weichen deutlich stärker ab, wobei nur die 
-Klasse '81-100' mit 4106 Beobachtungen ausreichend stark vertreten ist.
-Für die anderen ergeben sich durch '101-125 = 1093 Beob.' und
+Die drei höchsten Klassen weichen deutlich stärker ab, wobei nur die
+Klasse '81-100' mit 4079 Beobachtungen ausreichend stark vertreten ist.
+Für die anderen ergeben sich durch '101-125 = 1090 Beob.' und
 '>125 = 163 Beob.' viel weniger Beobachtungen.
 
 Daraus kann noch nicht auf ein schlechtes Modell geschlossen werden, da
-diese Abweichungen durch mgl. Streuung bei zu wenigen Beobachtungen 
+diese Abweichungen durch mgl. Streuung bei zu wenigen Beobachtungen
 verursacht werden kann.
 """
 
@@ -1294,31 +1429,23 @@ Durch die Absolubeträge heben sich Abweichungen pos. und neg. Tendenz nicht auf
 haben direkten Einfluss auf die "Gesamtabweichung".
 """
 
-#WMRAE für Alters- und BM-Gruppen berechnen
-
-age_wmrae = (
-    (age_comparison["count"] / age_comparison["count"].sum())
-    * age_comparison["gamma_rel_error"].abs()).sum()
-
-bm_wmrae = (
-    (bm_comparison["count"] / bm_comparison["count"].sum())
-    * bm_comparison["gamma_rel_error"].abs()).sum()
+#WMRAE für Alters- und BM-Gruppen (oben mit wmrae() berechnet)
 
 print(f"WMRAE Altersgruppen: {age_wmrae:.2f}%")
 print()
 print(f"WMRAE Bonus-Malus-Gruppen: {bm_wmrae:.2f}%")
 
 """
-WMRAE für Altersgruppen ist 1.13%
+WMRAE für Altersgruppen ist 1.14%
 
-Das ist eine sehr kleine Abweichung von den beobachteten 
+Das ist eine sehr kleine Abweichung von den beobachteten
 Schadenmittelwerten und damit eine sehr gute Kalibrierung
 des Modells bzgl. der Altersgruppen.
 
 ---------------------------------------------------------
-WMRAE für Bonus-Malus-Gruppen ist 3.06%
+WMRAE für Bonus-Malus-Gruppen ist 3.11%
 
-Das ist ebenfalls eine geringe Abweichung und deutlich 
+Das ist ebenfalls eine geringe Abweichung und deutlich
 klarer zu verstehen, als die einzelnen großen Fehler bei
 den hohen BM-Gruppen mit wenigen Beobachtungen.
 
@@ -1327,10 +1454,10 @@ Schlussfolgerung:
 
 Unter Berücksichtigung der Beobachtungsanzahlen der
 einzelnen Tarifgruppen zeigen die gewichteten mittleren
-relativen Fehler (WMRAE) bei beiden Gruppen sehr kleine 
+relativen Fehler (WMRAE) bei beiden Gruppen sehr kleine
 Abweichungen von den durchschnittlichen Schadenhöhen.
 
-Das Gamma-GLM kann also sehr wohl die Tarifgruppen sehr 
+Das Gamma-GLM kann also sehr wohl die Tarifgruppen sehr
 genau treffen und eignet sich daher als Severity-Modell.
 
 Die zuvor gesehen Abweichungen und Fehler existieren zwar,
@@ -1349,23 +1476,25 @@ print(f"Deviance / df: {deviance_ratio:.2f}")
 print(f"Pearson Chi² / df: {pearson_ratio:.2f}")
 
 """
-Deviance = 1.65
---> ist gering genug, um Gamma als brauchbar für das systematische
-Erfassen der Daten zu bewerten.
+Deviance / df = 1.64 und Pearson Chi2 / df = 47.34
 
+Beim Gamma-GLM sind beide Werte keine Gütemaße, die man mit 1 vergleicht,
+sondern Schätzer des Dispersionsparameters phi (Var = phi * mu^2).
+Pearson Chi2 / df ist der Standardschätzer (= 'Scale' im Summary).
 
-Pearson = 46.99
---> ist sehr hoch und spricht für eine große Streuung. Der Heavy Tail
-wird also durch Gamma nicht komplett abbgebildet.
+phi ~ 47 bedeutet einen Variationskoeffizienten von sqrt(47) ~ 6.9:
+die Standardabweichung ist ca. 7-mal so groß wie der Erwartungswert.
+Der große Unterschied zum Deviance-Schätzer zeigt, dass einige extreme
+Schäden den Pearson-Schätzer dominieren --> Heavy Tail.
 
 ---------------------------------------------------------------------
 Fazit:
-Gamma-GLM erfasst die durschnittliche Schadenhöhe der Tarifgruppen 
+Gamma-GLM erfasst die durschnittliche Schadenhöhe der Tarifgruppen
 sehr gut, bildet aber die extreme Streuung der Schadenhöhenverteilung
 nur eingeschränkt ab. Somit eine Modellgrenze identifiziert, die zur
 Zeit nicht behoben werden kann.
 
-In der Praxis müsste man nun komplexere Modelle/Ideen verwenden und 
+In der Praxis müsste man nun komplexere Modelle/Ideen verwenden und
 mittels weiterer Analysen den Tail besser beschreiben.
 """
 
@@ -1405,6 +1534,7 @@ for group in severity["bm_group"].dropna().unique():
 #Erwartete Schadenhäufigkeit und Schadenhöhe bereitstellen
 
 # Erwartete Schadenhäufigkeit (Poisson-GLM)
+# predict() ohne Offset -> erwartete Jahresfrequenz (Exposure = 1)
 policies["freq_pred"] = poisson_model.predict(policies)
 
 # Erwartete Schadenhöhe (Gamma-GLM)
@@ -1497,7 +1627,7 @@ for ax, age in zip(axes, age_groups):
 axes[0].set_ylabel("pure premium (€)")
 axes[2].set_ylabel("pure premium (€)")
 
-fig13.suptitle("expected pure premium by age group and Bonus-Malus group", 
+fig13.suptitle("expected pure premium by age group and Bonus-Malus group",
             fontsize=14)
 plt.tight_layout()
 
@@ -1511,8 +1641,8 @@ plt.close()
 #===============================================================================
 
 """
-Pure-Premium-Plausibilität prüfen über Vgl. mit beobachteten Schaden und 
-Exposure aus Daten. Jetzt können wir ein erstes Mal Brauchbarkeit der 
+Pure-Premium-Plausibilität prüfen über Vgl. mit beobachteten Schaden und
+Exposure aus Daten. Jetzt können wir ein erstes Mal Brauchbarkeit der
 Modelle testen, durch die Abweichungen zu den erbrachten Leistungen.
 """
 
@@ -1551,18 +1681,19 @@ print()
 print(pricing_check.round(2))
 
 """
-Beobachtung: 
+Beobachtung:
 
 Es gibt bei den einzelnen Gruppierungen deutliche Abweichungen so z.B.
-bei Alter '18-25' und BM '51-64' --> +359% zu beobachteten jährlichen 
-Schadenkosten. Wohingegen selbe Altersgruppe mit BM '>125' --> -29% 
-Abweichung hat.
+bei Alter '18-25' und BM '51-64' --> +283% zu beobachteten jährlichen
+Schadenkosten. Wohingegen selbe Altersgruppe mit BM '>125' --> -27%
+Abweichung hat. Die Abweichungen in 18-25 kommen vor allem daher, dass die
+drei Mio-Schäden über den Alters-Faktor auf alle BM-Klassen verteilt werden.
 
 Wie bereits bemerkt gibt es durch wenige Extremschäden große Schwankungen
-bzw. Verzerrungen. Das Modell scheint system. Zusammenhänge abbzubilden, 
+bzw. Verzerrungen. Das Modell scheint system. Zusammenhänge abbzubilden,
 aber auch eine Glättung vorzunehmen.
 
-Es wäre also besser wie bei der Güte vom Gamma-GLM eine Gewichtung der 
+Es wäre also besser wie bei der Güte vom Gamma-GLM eine Gewichtung der
 einzelnen Gruppen zu machen und die Exposure als Gewicht einzurechnen.
 
 Das geschieht im nächsten Code-Abschnitt.
@@ -1579,14 +1710,15 @@ weighted_error = (pricing_check["exposure"]
 print(f"Exposure-weighted absolute relative error:{weighted_error:.2f}%")
 
 """
-Diese Kennzahl für Abweichung mit Gewichtung durch Exposure ist mit 49,80%
-erstmal groß, aber wird durch hohe Abweichungen einiger Gruppen ermöglicht.
+Diese Kennzahl für Abweichung mit Gewichtung durch Exposure liegt bei 11,61%
+(vor der Datenbereinigung 49,80%) und wird durch hohe Abweichungen einiger
+kleiner Gruppen getrieben.
 
-Die Kennzahl reagiert empfindlich auf die hohen ClaimAmounts, welche auf 
-individueller Ebene einzelne Gruppierungen nach oben treiben. 
+Die Kennzahl reagiert empfindlich auf die hohen ClaimAmounts, welche auf
+individueller Ebene einzelne Gruppierungen nach oben treiben.
 
-Diese Kennzahl ist also nur ein erster Check für Plausibilität von 
-Tarifzahlen, bewertet aber nicht den Gesamtfit für das Portfolio. Das 
+Diese Kennzahl ist also nur ein erster Check für Plausibilität von
+Tarifzahlen, bewertet aber nicht den Gesamtfit für das Portfolio. Das
 wird weiter unten in den nächsten Code-Zeilen geschehen, womit dann die
 Bewertung der gesamten Struktur die Güte der Tarifierung aufzeigt.
 """
@@ -1603,14 +1735,14 @@ werden und dann später durch die Gesamtexposure geteilt werden.
 print(policies["Exposure"].describe())
 print(policies["Exposure"].mean())
 
-#Hier ist eine Mean-Exposure von ca 0.53 zu sehen, was nochmals das 
-#Gewichten bestätigt 
+#Hier ist eine Mean-Exposure von ca 0.53 zu sehen, was nochmals das
+#Gewichten bestätigt
 
 
 
 """
 Hier werden jetzt die beobachteten Claims mit dem Modell-Pure-Premium
-verglichen und ein relativer Fehler dazu bestimmt. Das soll dann die 
+verglichen und ein relativer Fehler dazu bestimmt. Das soll dann die
 Validierung des gesamten Portfolios darstellen.
 """
 
@@ -1650,24 +1782,30 @@ print(validation_table)
 """
 Beobachtung:
 
-Observed = 169,31 ; tatsächlicher beobachteter Schaden pro Jahr
+Observed = 167,15 ; beobachteter Schadenaufwand pro Versicherungsjahr
 
-Model Pure Premium = 223,34 ; modellierter Schaden pro Jahr
+Model Pure Premium = 165,82 ; modellierter Schadenaufwand pro Versicherungsjahr
 
-Portfolio rel. Fehler = 31,91% ; 
-Modell macht auf Portfolioebene insgesamt einen ca 30% höheren Schaden aus und
-überschätzt damit die Schäden 
+Portfolio rel. Fehler = -0,79%
 
-Weighted Error = 49,80% ;
+Weighted Error = 11,61% ;
 Stellt die durchschnittliche absolute Abweichung der 24 Tarifklassen nach Exposure
 gewichtet da. Wird durch einzelne verzerrte Tarifklassen stark beeinflusst.
 
 ------------------------------------------------------------------------------
-Fazit: 
+Fazit:
 
-Der rel Fehler für das gesamte Portfolio ist zu hoch und könnte durch falsche 
-Berücksichtigung der Exposure aus den Modellen entstanden sein. Also sollte nochmal
-der Einfluss der Exposure auf z.B. das Poisson-Modell geprüft werden.
+Vor der Datenbereinigung lag der Portfolio-Fehler bei +31,91%. Ursache war nicht
+die Exposure, sondern die Daten: Der Block am Anfang des Datensatzes enthält ca.
+27% aller ClaimNb, aber fast keine Schadenhöhen. Die Frequenz kam aus ClaimNb,
+der beobachtete Aufwand nur aus bezifferten Schäden --> Überschätzung um ca.
+ClaimNb / bezifferte Schäden ~ 1,35.
+
+Die -0,79% sind KEIN Nachweis guter Prognosequalität: Das Poisson-GLM mit
+Log-Link reproduziert in-sample die Schadenzahl exakt, das Gamma-GLM die
+Schadensumme fast exakt. Die Kennzahl zeigt nur, dass Frequenz- und
+Schadenhöhendaten jetzt konsistent sind. Die Prognosegüte muss out-of-sample
+(Train/Test-Split) geprüft werden.
 """
 
 
