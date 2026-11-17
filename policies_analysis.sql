@@ -538,6 +538,261 @@ Summary of chapter 1 -> cleaning rules for chapter 2:
 
 ------------------------------------------------------------------------
 ------------------------------------------------------------------------
+-- CHAPTER 2  Cleaning: consistent tables policies_clean / claims_clean
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+
+/*
+The cleaning rules from chapter 1 are applied here once. The result is stored
+in two new tables, so that all later analyses read the same cleaned data.
+The rules are identical to clean() in data_prep.py; check_sql_cleaning.py
+compares both implementations.
+
+Design decisions:
+- The raw tables stay untouched: cleaning is documented and reproducible.
+- The new tables get explicit keys instead of CREATE TABLE ... AS SELECT,
+  because CREATE TABLE AS copies only data and column types, no keys:
+    policies_clean.IDpol  PRIMARY KEY  -> unique, automatically indexed
+    claims_clean.ClaimID  PRIMARY KEY  -> a claim identifier, which the raw
+                                          claims table does not have (1.5)
+    claims_clean.IDpol    FOREIGN KEY  -> every claim must belong to a policy
+- All statements run in one transaction: either both tables are rebuilt
+  completely, or (on an error) nothing changes.
+
+SQLite: foreign keys are only enforced after PRAGMA foreign_keys = ON
+(off by default for backwards compatibility). The pragma has no effect
+inside a transaction, so it is set before BEGIN.
+*/
+
+PRAGMA foreign_keys = ON;
+
+BEGIN TRANSACTION;
+
+DROP TABLE IF EXISTS claims_clean;
+DROP TABLE IF EXISTS policies_clean;
+
+CREATE TABLE policies_clean (
+    IDpol       INTEGER PRIMARY KEY,
+    ClaimNb     INTEGER NOT NULL CHECK (ClaimNb BETWEEN 0 AND 4),
+    Exposure    REAL    NOT NULL CHECK (Exposure > 0 AND Exposure <= 1),
+    VehPower    INTEGER,
+    VehAge      INTEGER,
+    DrivAge     INTEGER NOT NULL,
+    BonusMalus  INTEGER NOT NULL,
+    VehBrand    TEXT,
+    VehGas      TEXT,
+    Area        TEXT,
+    Density     INTEGER,
+    Region      TEXT
+);
+
+CREATE TABLE claims_clean (
+    ClaimID     INTEGER PRIMARY KEY,                 -- generated identifier
+    IDpol       INTEGER NOT NULL REFERENCES policies_clean (IDpol),
+    ClaimAmount REAL    NOT NULL CHECK (ClaimAmount > 0)
+);
+
+-- policies: rules 1-4 from chapter 1
+INSERT INTO policies_clean
+WITH flagged AS (
+    SELECT
+        p.*,
+        SUM(CASE WHEN p.ClaimNb = 0 THEN 1 ELSE 0 END) OVER (
+            ORDER BY p.IDpol
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS claim_free_policies_so_far
+    FROM policies p
+),
+cc AS (
+    SELECT
+        IDpol,
+        COUNT(*) AS amount_records
+    FROM claims
+    GROUP BY IDpol
+)
+SELECT
+    CAST(f.IDpol AS INTEGER),          -- stored as REAL by pandas, an ID is an integer
+    f.ClaimNb,
+    MIN(f.Exposure, 1.0),              -- rule 4: cap exposure at one year
+    f.VehPower,
+    f.VehAge,
+    f.DrivAge,
+    f.BonusMalus,
+    f.VehBrand,
+    f.VehGas,
+    f.Area,
+    f.Density,
+    f.Region
+FROM flagged f
+LEFT JOIN cc
+    ON cc.IDpol = f.IDpol
+WHERE f.claim_free_policies_so_far > 0                -- rule 1: outside the block
+  AND f.ClaimNb = COALESCE(cc.amount_records, 0)      -- rule 2: counts match
+  AND f.ClaimNb <= 4;                                 -- rule 3: no fleet-like risks
+
+-- claims: rule 5, only claims of kept policies (the ClaimID is numbered automatically)
+INSERT INTO claims_clean (IDpol, ClaimAmount)
+SELECT
+    c.IDpol,
+    c.ClaimAmount
+FROM claims c
+INNER JOIN policies_clean p
+    ON p.IDpol = c.IDpol
+ORDER BY c.IDpol;
+
+CREATE INDEX idx_claims_clean_idpol ON claims_clean (IDpol);
+
+COMMIT;
+
+/*
+SQLite: MIN(a, b) with two arguments is a scalar function (the smaller value),
+with one argument it is the aggregate function. Other databases use LEAST(a, b).
+*/
+
+------------------------------------------------------------------------
+-- 2.1 Checks of the cleaned tables
+------------------------------------------------------------------------
+
+-- raw vs clean: what was removed?
+SELECT
+    'policies'                       AS item,
+    (SELECT COUNT(*) FROM policies)       AS raw,
+    (SELECT COUNT(*) FROM policies_clean) AS clean
+UNION ALL
+SELECT
+    'policy years (exposure)',
+    (SELECT CAST(ROUND(SUM(Exposure)) AS INTEGER) FROM policies),
+    (SELECT CAST(ROUND(SUM(Exposure)) AS INTEGER) FROM policies_clean)
+UNION ALL
+SELECT
+    'claims (ClaimNb)',
+    (SELECT SUM(ClaimNb) FROM policies),
+    (SELECT SUM(ClaimNb) FROM policies_clean)
+UNION ALL
+SELECT
+    'claim records with amount',
+    (SELECT COUNT(*) FROM claims),
+    (SELECT COUNT(*) FROM claims_clean)
+UNION ALL
+SELECT
+    'total claim amount',
+    (SELECT CAST(ROUND(SUM(ClaimAmount)) AS INTEGER) FROM claims),
+    (SELECT CAST(ROUND(SUM(ClaimAmount)) AS INTEGER) FROM claims_clean);
+
+-- consistency: every claim counted in ClaimNb has exactly one amount
+WITH cc AS (
+    SELECT
+        IDpol,
+        COUNT(*) AS amount_records
+    FROM claims_clean
+    GROUP BY IDpol
+)
+SELECT
+    COUNT(*) AS inconsistent_policies
+FROM policies_clean p
+LEFT JOIN cc
+    ON cc.IDpol = p.IDpol
+WHERE p.ClaimNb <> COALESCE(cc.amount_records, 0);
+
+-- foreign key check: lists claims whose policy does not exist (expected: none)
+PRAGMA foreign_key_check (claims_clean);
+
+/*
+Results:
+                              raw        clean      removed
+  policies                678,013      668,595       1.4%
+  policy years            358,499      353,540       1.4%
+  ClaimNb                  36,102       26,065
+  claim records            26,639       26,065       2.2%
+  total claim amount   60,697,931   59,092,708       2.6%
+
+- 0 inconsistent policies: sum of ClaimNb = number of claim records (26,065)
+- foreign key check: no rows -> every claim belongs to a policy
+
+Interpretation:
+The cleaned tables fulfil the condition frequency and severity need:
+both count the same 26,065 claims. The numbers are identical to the Python
+cleaning (data_prep.py), see check_sql_cleaning.py.
+*/
+
+------------------------------------------------------------------------
+-- 2.2 Views with the rating bands
+------------------------------------------------------------------------
+
+/*
+The rating bands were repeated as CASE blocks in nearly every query of the
+first version of this file. A view stores the query once; later queries
+select from the view like from a table. The view holds no data of its own,
+it is evaluated each time it is used, so it always reflects the current
+policies_clean table.
+*/
+
+DROP VIEW IF EXISTS v_policies_rated;
+CREATE VIEW v_policies_rated AS
+SELECT
+    p.*,
+    CASE
+        WHEN p.DrivAge <= 25 THEN '18-25'
+        WHEN p.DrivAge <= 40 THEN '26-40'
+        WHEN p.DrivAge <= 60 THEN '41-60'
+        ELSE '61+'
+    END AS age_group,
+    CASE
+        WHEN p.BonusMalus <= 50  THEN '<=50'
+        WHEN p.BonusMalus <= 64  THEN '51-64'
+        WHEN p.BonusMalus <= 80  THEN '65-80'
+        WHEN p.BonusMalus <= 100 THEN '81-100'
+        WHEN p.BonusMalus <= 125 THEN '101-125'
+        ELSE '>125'
+    END AS bm_group,
+    -- sort keys, so that groups appear in natural order instead of alphabetically
+    CASE
+        WHEN p.DrivAge <= 25 THEN 1
+        WHEN p.DrivAge <= 40 THEN 2
+        WHEN p.DrivAge <= 60 THEN 3
+        ELSE 4
+    END AS age_order,
+    CASE
+        WHEN p.BonusMalus <= 50  THEN 1
+        WHEN p.BonusMalus <= 64  THEN 2
+        WHEN p.BonusMalus <= 80  THEN 3
+        WHEN p.BonusMalus <= 100 THEN 4
+        WHEN p.BonusMalus <= 125 THEN 5
+        ELSE 6
+    END AS bm_order
+FROM policies_clean p;
+
+-- claims with the rating bands of their policy
+DROP VIEW IF EXISTS v_claims_rated;
+CREATE VIEW v_claims_rated AS
+SELECT
+    c.ClaimID,
+    c.IDpol,
+    c.ClaimAmount,
+    p.age_group,
+    p.bm_group,
+    p.age_order,
+    p.bm_order
+FROM claims_clean c
+INNER JOIN v_policies_rated p
+    ON p.IDpol = c.IDpol;
+
+-- check: every policy falls into exactly one band
+SELECT
+    age_group,
+    COUNT(*) AS policy_count
+FROM v_policies_rated
+GROUP BY age_group, age_order
+ORDER BY age_order;
+
+/*
+Results: 18-25: 38,482 / 26-40: 233,337 / 41-60: 295,716 / 61+: 101,060 policies,
+together 668,595 = all cleaned policies.
+*/
+
+
+------------------------------------------------------------------------
+------------------------------------------------------------------------
 -- LEGACY QUERIES (raw data) - revised in the next packages
 -- CHAPTER 3 and 4 will replace the following sections and run on the
 -- cleaned tables. Kept here unchanged until then.

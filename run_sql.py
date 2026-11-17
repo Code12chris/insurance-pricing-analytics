@@ -61,13 +61,14 @@ def main():
             sys.exit(f"'{marker}' not found in {path}")
         sql_text = sql_text[sql_text.index(marker):]
 
-    con = sqlite3.connect("insurance.db")
+    # isolation_level=None: Python does not open or commit transactions itself,
+    # BEGIN / COMMIT in the SQL file are executed exactly as written
+    con = sqlite3.connect("insurance.db", isolation_level=None)
     for i, (title, code) in enumerate(split_statements(sql_text), start=1):
         t0 = time.perf_counter()
         cur = con.execute(code)
         rows = cur.fetchall()
         elapsed = time.perf_counter() - t0
-        con.commit()
         first_line = code.splitlines()[0]
         print(f"\n[{i}] {title}\n    {first_line} ...  ({elapsed * 1000:.0f} ms)")
         if cur.description:
