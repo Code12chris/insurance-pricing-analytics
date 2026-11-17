@@ -96,6 +96,14 @@ Results:
 - a lookup of a single policy (WHERE IDpol = ...) drops from a full
   table scan (about 25 ms) to an index search (< 1 ms)
 
+Terms in the query plan:
+- SCAN:   reads the whole table row by row
+- SEARCH: jumps directly to the matching rows via an index
+- AUTOMATIC INDEX: a temporary index SQLite builds for this query only
+- COVERING INDEX:  the index alone contains every column the query needs,
+                   so the table itself is not read at all
+- BLOOM FILTER:    a quick pre-check that skips rows which cannot match
+
 Interpretation:
 An index pays off for columns that are joined or filtered on repeatedly.
 It is not free: it uses disk space and slows down inserts and updates.
@@ -613,7 +621,8 @@ cc AS (
 SELECT
     CAST(f.IDpol AS INTEGER),          -- stored as REAL by pandas, an ID is an integer
     f.ClaimNb,
-    MIN(f.Exposure, 1.0),              -- rule 4: cap exposure at one year
+    MIN(f.Exposure, 1.0),              -- rule 4: cap exposure at one year (1.3);
+                                       -- contracts run for at most one year
     f.VehPower,
     f.VehAge,
     f.DrivAge,
@@ -626,11 +635,20 @@ SELECT
 FROM flagged f
 LEFT JOIN cc
     ON cc.IDpol = f.IDpol
-WHERE f.claim_free_policies_so_far > 0                -- rule 1: outside the block
-  AND f.ClaimNb = COALESCE(cc.amount_records, 0)      -- rule 2: counts match
-  AND f.ClaimNb <= 4;                                 -- rule 3: no fleet-like risks
+-- rule 1: drop the block of claim-only policies at the start (1.9); it is a
+--         selection of claim cases, not a sample of the portfolio
+WHERE f.claim_free_policies_so_far > 0
+-- rule 2: keep only policies whose ClaimNb equals their number of claim
+--         amounts, so that frequency and severity count the same claims (1.8)
+  AND f.ClaimNb = COALESCE(cc.amount_records, 0)
+-- rule 3: drop policies with more than 4 claims (fleet-like risks, 1.6);
+--         excluded instead of capped, otherwise ClaimNb (4) and the number
+--         of claim amounts (up to 16) would differ again
+  AND f.ClaimNb <= 4;
 
--- claims: rule 5, only claims of kept policies (the ClaimID is numbered automatically)
+-- claims: rule 5, keep only claims whose policy was kept (the INNER JOIN drops
+-- the 195 claims without a policy and the claims of policies removed above);
+-- ClaimID is numbered automatically because it is the INTEGER PRIMARY KEY
 INSERT INTO claims_clean (IDpol, ClaimAmount)
 SELECT
     c.IDpol,
@@ -725,6 +743,12 @@ first version of this file. A view stores the query once; later queries
 select from the view like from a table. The view holds no data of its own,
 it is evaluated each time it is used, so it always reflects the current
 policies_clean table.
+
+Why this matters: the band limits are defined in exactly one place and are
+identical to data_prep.py. A change (e.g. a new Bonus-Malus band) is made
+once and applies to every query, and SQL and Python results stay comparable.
+Repeated CASE blocks invite small differences between copies, which is how
+the first version ended up with bands that differed from the Python code.
 */
 
 DROP VIEW IF EXISTS v_policies_rated;
@@ -793,794 +817,301 @@ together 668,595 = all cleaned policies.
 
 ------------------------------------------------------------------------
 ------------------------------------------------------------------------
--- LEGACY QUERIES (raw data) - revised in the next packages
--- CHAPTER 3 and 4 will replace the following sections and run on the
--- cleaned tables. Kept here unchanged until then.
+-- CHAPTER 3  Portfolio metrics and segmentation on the CLEAN data
 ------------------------------------------------------------------------
 ------------------------------------------------------------------------
-------------------------------------------------------------------------
--- 2 Portfolio metrics
-------------------------------------------------------------------------
-
--- Summarize the size of the insurance portfolio and its
--- total exposure and reported claim count. 
-
-SELECT
-    COUNT(*) AS policy_count,
-    SUM(Exposure) AS total_exposure,
-    SUM(ClaimNb) AS total_claim_count,
-    AVG(Exposure) AS avg_exposure_per_policy,
-    SUM(ClaimNb) * 1.0 / SUM(Exposure) AS 
-    claim_frequency
-FROM policies;
 
 /*
-Result:
+The three building blocks of a tariff, observed directly from the data:
 
--Number of policies is 678,013
--total exposure is 358499.45 
-(rounded to 2 decimals)
--total claim count is 36,102
--average exposure per policy is 0.5287
-(rounded to 4 decimals)
--claim frequency is 0.1007
-(rounded to 4 decimals)
+    claim frequency   = claims / policy years            (how often)
+    claim severity    = claim amount / claims            (how expensive)
+    pure premium      = claim amount / policy years      (= frequency x severity)
+
+These observed values are what the GLMs in main.py, validation.py and
+features.py try to reproduce and smooth. Looking at them first shows where
+the models have a lot of data and where they must extrapolate.
+
+Method used in every query of this chapter:
+policies and claims are aggregated SEPARATELY and joined afterwards on the
+segment. Joining claims to policies first and then summing exposure would
+count the exposure of a policy once per claim (a policy with 3 claims would
+contribute its exposure 3 times) and understate the frequency.
+
+All queries read the views v_policies_rated / v_claims_rated (chapter 2.2).
+SQLite: column names are not case-sensitive; claim_count and CLAIM_COUNT are
+the same column. Names are therefore chosen to be unique without relying on
+upper/lower case.
 */
 
+------------------------------------------------------------------------
+-- 3.1 Portfolio overview
+------------------------------------------------------------------------
 
----------------------------------------------------------
--- Portfolio metrics by driver age group.
--- The CTE assigns risk groups before aggregating portfolio metrics.
-
-WITH classified_policies AS (
-    SELECT
-        Exposure,
-        ClaimNb,
-        CASE
-            WHEN DrivAge BETWEEN 18 AND 25 THEN '18-25'
-            WHEN DrivAge BETWEEN 26 AND 40 THEN '26-40'
-            WHEN DrivAge BETWEEN 41 AND 60 THEN '41-60'
-            WHEN DrivAge >= 61 THEN '61+'
-            ELSE 'Other / missing'
-        END AS age_group
-    FROM policies
-)
+-- one line with the key figures of the whole cleaned portfolio
 SELECT
-    age_group,
-    COUNT(*) AS policy_count,
-    SUM(Exposure) AS total_exposure,
-    SUM(ClaimNb) AS total_claim_count,
-    SUM(ClaimNb) * 1.0 / SUM(Exposure) AS claim_frequency
-FROM classified_policies
-GROUP BY age_group
-ORDER BY
-    CASE age_group
-        WHEN '18-25' THEN 1
-        WHEN '26-40' THEN 2
-        WHEN '41-60' THEN 3
-        WHEN '61+' THEN 4
-        ELSE 5
-    END;
-
---remark: each policy can be associated to our
---defined age groups / no missing policies detected
-
-
-----------------------------------------------------------
-
--- Portfolio metrics by bonus-malus group.
--- The CTE assigns risk groups before aggregating portfolio metrics.
-
-WITH classified_policies AS (
-    SELECT
-        Exposure,
-        ClaimNb,
-        CASE
-            WHEN BonusMalus <= 50 THEN '<=50'
-            WHEN BonusMalus <= 75 THEN '51-75'
-            WHEN BonusMalus <= 100 THEN '76-100'
-            WHEN BonusMalus <= 125 THEN '101-125'
-            WHEN BonusMalus > 125 THEN '>125'
-            ELSE 'Other / missing'
-        END AS bm_group
-    FROM policies
-)
-SELECT
-    bm_group,
-    COUNT(*) AS policy_count,
-    SUM(Exposure) AS total_exposure,
-    SUM(ClaimNb) AS total_claim_count,
-    SUM(ClaimNb) * 1.0 / SUM(Exposure) AS claim_frequency
-FROM classified_policies
-GROUP BY bm_group
-ORDER BY
-    CASE bm_group
-        WHEN '<=50' THEN 1
-        WHEN '51-75' THEN 2
-        WHEN '76-100' THEN 3
-        WHEN '101-125' THEN 4
-        WHEN '>125' THEN 5
-        ELSE 6
-    END;
-
---remark: each policy can be associated to our
---defined bm groups / no missing policies detected
-
-
-
--------------------------------------------------------------------------
--- Observed claim severity across all claim records.
--- Establish a baseline before separating matched and unmatched claims.
-
-SELECT
-    COUNT(*) AS claim_record_count,
-    SUM(ClaimAmount) AS total_claim_amount,
-    AVG(ClaimAmount) AS avg_claim_amount,
-    MIN(ClaimAmount) AS min_claim_amount,
-    MAX(ClaimAmount) AS max_claim_amount
-FROM claims;
+    COUNT(*)                                     AS policy_count,
+    ROUND(SUM(Exposure), 0)                      AS policy_years,
+    SUM(ClaimNb)                                 AS claim_count,
+    ROUND(SUM(ClaimNb) / SUM(Exposure), 4)       AS claim_frequency,
+    (SELECT ROUND(AVG(ClaimAmount), 2) FROM claims_clean)
+                                                 AS avg_claim_amount,
+    ROUND((SELECT SUM(ClaimAmount) FROM claims_clean) / SUM(Exposure), 2)
+                                                 AS observed_pure_premium
+FROM policies_clean;
 
 /*
-Result:
+Results:
+- 668,595 policies, 353,540 policy years, 26,065 claims
+- claim frequency 0.0737 (7.4 claims per 100 policy years)
+- average claim amount 2,267.13
+- observed pure premium 167.15 per policy year
 
--Number of claims is 26,639
--total claim amount is 60.70 Mio 
-(rounded to 2 decimals)
--average claim amount is 2,278.54 
-(rounded to 2 decimals)
--min claim = 1 ; max claim = 4.08 Mio
-(rounded to 2 decimals)
+Interpretation:
+167.15 is the benchmark for the whole tariff: the pure premiums of all
+segments, weighted with their exposure, must add up to this value. The model
+in main.py reproduces it (portfolio deviation -0.79%).
+On the raw data the frequency was 0.1007; the difference is the block of
+claim-only policies removed in chapter 2.
 */
 
--------------------------------------------------------------------------
+------------------------------------------------------------------------
+-- 3.2 Frequency, severity and pure premium by driver age group
+------------------------------------------------------------------------
 
--- Compare claim amounts by policy-matching status.
--- Unmatched claims cannot be assigned to age or bonus-malus groups.
+/*
+Besides the plain severity, a severity with every claim capped at 50,000 is
+shown (MIN(ClaimAmount, 50000)). The comparison shows how much of a
+segment's claim cost comes from a few very large claims.
+*/
 
-
-SELECT
-    CASE
-        WHEN p.IDpol IS NULL THEN 'Unmatched'
-        ELSE 'Matched'
-    END AS policy_match,
-    COUNT(*) AS claim_record_count,
-    SUM(c.ClaimAmount) AS total_claim_amount,
-    AVG(c.ClaimAmount) AS avg_claim_amount,
-    MIN(c.ClaimAmount) AS min_claim_amount,
-    MAX(c.ClaimAmount) AS max_claim_amount
-FROM claims c
-LEFT JOIN policies p
-    ON c.IDpol = p.IDpol
-GROUP BY policy_match
-ORDER BY
-    CASE policy_match
-        WHEN 'Matched' THEN 1
-        ELSE 2
-    END;
-
-
--------------------------------------------------------------------------
--- Observed claim severity by driver age group.
--- Only claims matched to a policy can be assigned to an age group.
-
-
-WITH classified_policies AS (
-    SELECT
-        IDpol,
-        CASE
-            WHEN DrivAge BETWEEN 18 AND 25 THEN '18-25'
-            WHEN DrivAge BETWEEN 26 AND 40 THEN '26-40'
-            WHEN DrivAge BETWEEN 41 AND 60 THEN '41-60'
-            WHEN DrivAge >= 61 THEN '61+'
-            ELSE 'Other / missing'
-        END AS age_group
-    FROM policies
-)
-SELECT
-    p.age_group,
-    COUNT(*) AS claim_record_count,
-    SUM(c.ClaimAmount) AS total_claim_amount,
-    AVG(c.ClaimAmount) AS avg_claim_amount
-FROM claims c
-INNER JOIN classified_policies p
-    ON c.IDpol = p.IDpol
-GROUP BY p.age_group
-ORDER BY
-    CASE p.age_group
-        WHEN '18-25' THEN 1
-        WHEN '26-40' THEN 2
-        WHEN '41-60' THEN 3
-        WHEN '61+' THEN 4
-        ELSE 5
-    END;
-
-
--------------------------------------------------------------------------
--- Observed claim severity by bonus-malus group.
--- Only claims matched to a policy can be assigned to a bonus-malus group.
-
-
-WITH classified_policies AS (
-    SELECT
-        IDpol,
-        CASE
-            WHEN BonusMalus <= 50 THEN '<=50'
-            WHEN BonusMalus <= 75 THEN '51-75'
-            WHEN BonusMalus <= 100 THEN '76-100'
-            WHEN BonusMalus <= 125 THEN '101-125'
-            WHEN BonusMalus > 125 THEN '>125'
-            ELSE 'Other / missing'
-        END AS bm_group
-    FROM policies
-)
-SELECT
-    p.bm_group,
-    COUNT(*) AS claim_record_count,
-    SUM(c.ClaimAmount) AS total_claim_amount,
-    AVG(c.ClaimAmount) AS avg_claim_amount
-FROM claims c
-INNER JOIN classified_policies p
-    ON c.IDpol = p.IDpol
-GROUP BY p.bm_group
-ORDER BY
-    CASE p.bm_group
-        WHEN '<=50' THEN 1
-        WHEN '51-75' THEN 2
-        WHEN '76-100' THEN 3
-        WHEN '101-125' THEN 4
-        WHEN '>125' THEN 5
-        ELSE 6
-    END;
-
-
--------------------------------------------------------------------------
--- Observed claim cost and frequency metrics by driver age group.
--- Aggregate policy and claim data separately to prevent join duplication.
-
-WITH classified_policies AS (
-    SELECT
-        IDpol,
-        Exposure,
-        ClaimNb,
-        CASE
-            WHEN DrivAge BETWEEN 18 AND 25 THEN '18-25'
-            WHEN DrivAge BETWEEN 26 AND 40 THEN '26-40'
-            WHEN DrivAge BETWEEN 41 AND 60 THEN '41-60'
-            WHEN DrivAge >= 61 THEN '61+'
-            ELSE 'Other / missing'
-        END AS age_group
-    FROM policies
-),
-policy_metrics AS (
+WITH policy_metrics AS (
     SELECT
         age_group,
-        COUNT(*) AS policy_count,
-        SUM(Exposure) AS total_exposure,
-        SUM(ClaimNb) AS total_claim_count
-    FROM classified_policies
+        age_order,
+        COUNT(*)      AS policy_count,
+        SUM(Exposure) AS policy_years,
+        SUM(ClaimNb)  AS claim_count
+    FROM v_policies_rated
+    GROUP BY age_group, age_order
+),
+claim_metrics AS (
+    SELECT
+        age_group,
+        SUM(ClaimAmount)              AS claim_amount,
+        SUM(MIN(ClaimAmount, 50000))  AS claim_amount_capped
+    FROM v_claims_rated
     GROUP BY age_group
-),
-claim_metrics AS (
-    SELECT
-        p.age_group,
-        COUNT(*) AS claim_record_count,
-        SUM(c.ClaimAmount) AS total_claim_amount
-    FROM claims c
-    INNER JOIN classified_policies p
-        ON c.IDpol = p.IDpol
-    GROUP BY p.age_group
 )
 SELECT
     p.age_group,
     p.policy_count,
-    p.total_exposure,
-    p.total_claim_count,
-    p.total_claim_count * 1.0 / p.total_exposure
-        AS claim_frequency,
-    c.claim_record_count,
-    c.total_claim_amount,
-    c.total_claim_amount / c.claim_record_count
-        AS avg_claim_amount,
-    c.claim_record_count * 1.0 / p.total_exposure
-        AS severity_record_frequency,
-    c.total_claim_amount / p.total_exposure
-        AS observed_pure_premium
+    ROUND(p.policy_years, 0)                          AS policy_years,
+    p.claim_count,
+    ROUND(p.claim_count / p.policy_years, 4)          AS claim_frequency,
+    ROUND(c.claim_amount / p.claim_count, 0)          AS avg_claim_amount,
+    ROUND(c.claim_amount_capped / p.claim_count, 0)   AS avg_claim_amount_capped,
+    ROUND(c.claim_amount / p.policy_years, 2)         AS observed_pure_premium,
+    ROUND(c.claim_amount_capped / p.policy_years, 2)  AS pure_premium_capped
 FROM policy_metrics p
 INNER JOIN claim_metrics c
-    ON p.age_group = c.age_group
-ORDER BY
-    CASE p.age_group
-        WHEN '18-25' THEN 1
-        WHEN '26-40' THEN 2
-        WHEN '41-60' THEN 3
-        WHEN '61+' THEN 4
-        ELSE 5
-    END;
+    ON c.age_group = p.age_group
+ORDER BY p.age_order;
 
 /*
-Remark:
-This table shows many important key aspects for an evaluation of the
-age group categories. The pure premium observation indicates a much 
-higher amount with 758.40 vs. ca. 130-150 in other age groups.
+Results:
+  age     policies  frequency  avg claim  capped  pure premium  capped
+  18-25     38,482     0.1487      5,140   1,997        764.23  296.94
+  26-40    233,337     0.0725      2,121   1,752        153.68  126.98
+  41-60    295,716     0.0722      1,785   1,679        128.88  121.26
+  61+      101,060     0.0608      2,255   1,806        137.18  109.88
 
-This follows from severity data and avg. claim amount, which are 
-considerably higher compared to the other age groups.Area
+Interpretation:
+- Young drivers have twice the average claim frequency (0.149 vs 0.074).
+- Their average claim amount (5,140) is 2.3 to 2.9 times that of the other groups,
+  but with claims capped at 50,000 it is only about 1.1 to 1.2 times as high.
+  The severity difference comes almost entirely from a few very large claims
+  (the three claims above 1 million, chapter 1.7), not from more expensive
+  ordinary claims.
+- Their observed pure premium of 764 therefore rests on a handful of claims;
+  capped it is 297. How the large-claim excess should be shared between the
+  groups is discussed in features.py (uniform vs credibility-weighted loading).
 */
 
+------------------------------------------------------------------------
+-- 3.3 Frequency, severity and pure premium by Bonus-Malus group
+------------------------------------------------------------------------
 
--------------------------------------------------------------------------
--- Observed claim cost and frequency metrics by bonus-malus group.
--- Aggregate policy and claim data separately to prevent join duplication.
-
-WITH classified_policies AS (
-    SELECT
-        IDpol,
-        Exposure,
-        ClaimNb,
-        CASE
-            WHEN BonusMalus <= 50 THEN '<=50'
-            WHEN BonusMalus <= 75 THEN '51-75'
-            WHEN BonusMalus <= 100 THEN '76-100'
-            WHEN BonusMalus <= 125 THEN '101-125'
-            WHEN BonusMalus > 125 THEN '>125'
-            ELSE 'Other / missing'
-        END AS bm_group
-    FROM policies
-),
-policy_metrics AS (
+WITH policy_metrics AS (
     SELECT
         bm_group,
-        COUNT(*) AS policy_count,
-        SUM(Exposure) AS total_exposure,
-        SUM(ClaimNb) AS total_claim_count
-    FROM classified_policies
+        bm_order,
+        COUNT(*)      AS policy_count,
+        SUM(Exposure) AS policy_years,
+        SUM(ClaimNb)  AS claim_count
+    FROM v_policies_rated
+    GROUP BY bm_group, bm_order
+),
+claim_metrics AS (
+    SELECT
+        bm_group,
+        SUM(ClaimAmount)              AS claim_amount,
+        SUM(MIN(ClaimAmount, 50000))  AS claim_amount_capped
+    FROM v_claims_rated
     GROUP BY bm_group
-),
-claim_metrics AS (
-    SELECT
-        p.bm_group,
-        COUNT(*) AS claim_record_count,
-        SUM(c.ClaimAmount) AS total_claim_amount
-    FROM claims c
-    INNER JOIN classified_policies p
-        ON c.IDpol = p.IDpol
-    GROUP BY p.bm_group
 )
 SELECT
     p.bm_group,
     p.policy_count,
-    p.total_exposure,
-    p.total_claim_count,
-    p.total_claim_count * 1.0 / p.total_exposure
-        AS claim_frequency,
-    c.claim_record_count,
-    c.total_claim_amount,
-    c.total_claim_amount / c.claim_record_count
-        AS avg_claim_amount,
-    c.claim_record_count * 1.0 / p.total_exposure
-        AS severity_record_frequency,
-    c.total_claim_amount / p.total_exposure
-        AS observed_pure_premium
+    ROUND(p.policy_years, 0)                          AS policy_years,
+    p.claim_count,
+    ROUND(p.claim_count / p.policy_years, 4)          AS claim_frequency,
+    ROUND(c.claim_amount / p.claim_count, 0)          AS avg_claim_amount,
+    ROUND(c.claim_amount_capped / p.claim_count, 0)   AS avg_claim_amount_capped,
+    ROUND(c.claim_amount / p.policy_years, 2)         AS observed_pure_premium
 FROM policy_metrics p
 INNER JOIN claim_metrics c
-    ON p.bm_group = c.bm_group
-ORDER BY
-    CASE p.bm_group
-        WHEN '<=50' THEN 1
-        WHEN '51-75' THEN 2
-        WHEN '76-100' THEN 3
-        WHEN '101-125' THEN 4
-        WHEN '>125' THEN 5
-        ELSE 6
-    END;
+    ON c.bm_group = p.bm_group
+ORDER BY p.bm_order;
 
 /*
-Remark:
-This table shows many important key aspects for an evaluation of the
-BM-Group categories. The pure premium amount is clearly correlated 
-to the BM-Group with rising value as the BM-number ascends.
+Results: see table; frequency rises from 0.051 (<=50) to 0.438 (>125),
+the pure premium from 98 to 1,463.
 
-This behaviour is plausible with the tariff examples from different 
-insurance companies.
-
-One should be careful with the smaller BM-Groups '101-125' and '>125'
-since the policy count is exceptionally small compared to the other
-BM-Groups (807 and 6987 vs. 100,000 - 380,000). 
+Interpretation:
+- Bonus-Malus is the strongest rating factor: the frequency rises more than
+  eightfold from the best to the worst class. Bonus-Malus summarises the
+  driver's own claim history, so it carries more information than age.
+- Severity hardly depends on Bonus-Malus once claims are capped
+  (about 1,680-1,930 in the large groups). Bonus-Malus predicts HOW OFTEN
+  a driver has an accident, much less HOW EXPENSIVE it is.
+- The classes 101-125 (6,907 policies) and >125 (806 policies) are small;
+  their values are uncertain (see 3.5).
 */
 
-
-
 ------------------------------------------------------------------------
--- 3 Risk and premium segmentation
+-- 3.4 Claim frequency by age and Bonus-Malus as a cross table
 ------------------------------------------------------------------------
-
--- Analyze claim frequency across combined age and bonus-malus segments.
--- This reveals patterns that separate one-dimensional summaries may hide.
-
-WITH classified_policies AS (
-    SELECT
-        Exposure,
-        ClaimNb,
-        CASE
-            WHEN DrivAge BETWEEN 18 AND 25 THEN '18-25'
-            WHEN DrivAge BETWEEN 26 AND 40 THEN '26-40'
-            WHEN DrivAge BETWEEN 41 AND 60 THEN '41-60'
-            WHEN DrivAge >= 61 THEN '61+'
-            ELSE 'Other / missing'
-        END AS age_group,
-        CASE
-            WHEN BonusMalus <= 50 THEN '<=50'
-            WHEN BonusMalus <= 75 THEN '51-75'
-            WHEN BonusMalus <= 100 THEN '76-100'
-            WHEN BonusMalus <= 125 THEN '101-125'
-            WHEN BonusMalus > 125 THEN '>125'
-            ELSE 'Other / missing'
-        END AS bm_group
-    FROM policies
-)
-SELECT
-    age_group,
-    bm_group,
-    COUNT(*) AS policy_count,
-    SUM(Exposure) AS total_exposure,
-    SUM(ClaimNb) AS total_claim_count,
-    SUM(ClaimNb) * 1.0 / SUM(Exposure) AS claim_frequency
-FROM classified_policies
-GROUP BY
-    age_group,
-    bm_group
-ORDER BY
-    CASE age_group
-        WHEN '18-25' THEN 1
-        WHEN '26-40' THEN 2
-        WHEN '41-60' THEN 3
-        WHEN '61+' THEN 4
-        ELSE 5
-    END,
-    CASE bm_group
-        WHEN '<=50' THEN 1
-        WHEN '51-75' THEN 2
-        WHEN '76-100' THEN 3
-        WHEN '101-125' THEN 4
-        WHEN '>125' THEN 5
-        ELSE 6
-    END;
 
 /*
-Remark:
-
-Inside each age group it can be observed, that claim freq. is
-ascending with higher BM-number. 
-
-Again one has to be cautious with interpretations on 
-combinations with small policy counts e.g. age 61+ with 
-BM-'>125' has only 73 policies.  
+A cross table with age groups as rows and Bonus-Malus groups as columns is
+easier to read than 24 rows. SQLite has no PIVOT operator; the standard
+replacement is conditional aggregation: one SUM(CASE WHEN ...) per column,
+which only adds up the rows of that Bonus-Malus group.
 */
 
-
-
-------------------------------------------------------------------------
--- Calculate average claim amount across combined age and bm segments
--- Only matched claim records are used for the segments
-
-WITH classified_policies AS (
-    SELECT
-        IDpol,
-        CASE
-            WHEN DrivAge BETWEEN 18 AND 25 THEN '18-25'
-            WHEN DrivAge BETWEEN 26 AND 40 THEN '26-40'
-            WHEN DrivAge BETWEEN 41 AND 60 THEN '41-60'
-            WHEN DrivAge >= 61 THEN '61+'
-            ELSE 'Other / missing'
-        END AS age_group,
-        CASE
-            WHEN BonusMalus <= 50 THEN '<=50'
-            WHEN BonusMalus <= 75 THEN '51-75'
-            WHEN BonusMalus <= 100 THEN '76-100'
-            WHEN BonusMalus <= 125 THEN '101-125'
-            WHEN BonusMalus > 125 THEN '>125'
-            ELSE 'Other / missing'
-        END AS bm_group
-    FROM policies
-)
 SELECT
-    p.age_group,
-    p.bm_group,
-    COUNT(*) AS claim_record_count,
-    SUM(c.ClaimAmount) AS total_claim_amount,
-    AVG(c.ClaimAmount) AS avg_claim_amount
-FROM claims c
-INNER JOIN classified_policies p
-    ON c.IDpol = p.IDpol
-GROUP BY
-    p.age_group,
-    p.bm_group
-ORDER BY
-    CASE p.age_group
-        WHEN '18-25' THEN 1
-        WHEN '26-40' THEN 2
-        WHEN '41-60' THEN 3
-        WHEN '61+' THEN 4
-        ELSE 5
-    END,
-    CASE p.bm_group
-        WHEN '<=50' THEN 1
-        WHEN '51-75' THEN 2
-        WHEN '76-100' THEN 3
-        WHEN '101-125' THEN 4
-        WHEN '>125' THEN 5
-        ELSE 6
-    END;
+    age_group,
+    ROUND(SUM(CASE WHEN bm_group = '<=50'    THEN ClaimNb  END)
+        / SUM(CASE WHEN bm_group = '<=50'    THEN Exposure END), 3) AS "bm <=50",
+    ROUND(SUM(CASE WHEN bm_group = '51-64'   THEN ClaimNb  END)
+        / SUM(CASE WHEN bm_group = '51-64'   THEN Exposure END), 3) AS "bm 51-64",
+    ROUND(SUM(CASE WHEN bm_group = '65-80'   THEN ClaimNb  END)
+        / SUM(CASE WHEN bm_group = '65-80'   THEN Exposure END), 3) AS "bm 65-80",
+    ROUND(SUM(CASE WHEN bm_group = '81-100'  THEN ClaimNb  END)
+        / SUM(CASE WHEN bm_group = '81-100'  THEN Exposure END), 3) AS "bm 81-100",
+    ROUND(SUM(CASE WHEN bm_group = '101-125' THEN ClaimNb  END)
+        / SUM(CASE WHEN bm_group = '101-125' THEN Exposure END), 3) AS "bm 101-125",
+    ROUND(SUM(CASE WHEN bm_group = '>125'    THEN ClaimNb  END)
+        / SUM(CASE WHEN bm_group = '>125'    THEN Exposure END), 3) AS "bm >125"
+FROM v_policies_rated
+GROUP BY age_group, age_order
+ORDER BY age_order;
 
+/*
+Results:
+  age      <=50   51-64  65-80  81-100  101-125   >125
+  18-25   0.101   0.059  0.070   0.165    0.375  0.458
+  26-40   0.043   0.065  0.090   0.125    0.309  0.366
+  41-60   0.056   0.117  0.136   0.153    0.350  0.429
+  61+     0.045   0.140  0.166   0.153    0.379  0.643
 
+Interpretation:
+- Within every age group the frequency rises with the Bonus-Malus class.
+- The same Bonus-Malus class means different things at different ages.
+  For a young driver Bonus-Malus 81-100 is the normal starting level
+  (new drivers start at 100); for a 41-60 year old it means past claims.
+  In the class 51-64, drivers aged 41-60 therefore have twice the frequency
+  of drivers aged 18-25 (0.117 vs 0.059). A model with separate age and
+  Bonus-Malus factors cannot represent this; an age x Bonus-Malus
+  interaction would be the next model step.
+- Young drivers with Bonus-Malus <=50 have a frequency of 0.101, more than
+  twice the value of the other age groups in that class. This fits the
+  implausible Bonus-Malus 50 at age 18-20 found in chapter 1.3.
+*/
 
 ------------------------------------------------------------------------
--- Calculate observed pure premium across combined age and bonus-malus segments.
--- Aggregate policy and claim data separately to prevent join duplication.
--- Only matched claim records can be assigned to the respective risk segments.
+-- 3.5 Observed pure premium per tariff cell and its reliability
+------------------------------------------------------------------------
 
-WITH classified_policies AS (
+/*
+The observed pure premium of a cell is only meaningful if the cell has
+enough claims. The classical limited-fluctuation credibility standard asks
+for 1,082 claims: then the observed claim count lies within +-5% of its
+expected value with 90% probability ((1.645 / 0.05)^2 = 1,082).
+Cells with fewer claims get a partial credibility Z = sqrt(claims / 1,082).
+
+The LEFT JOIN keeps cells without any claim (they would disappear with an
+INNER JOIN), COALESCE turns their missing claim amount into 0.
+
+SQLite: SQRT() requires SQLite 3.35+ compiled with math functions, which is
+the case for the SQLite bundled with current Python versions.
+*/
+
+WITH policy_metrics AS (
     SELECT
-        IDpol,
-        Exposure,
-        ClaimNb,
-        CASE
-            WHEN DrivAge BETWEEN 18 AND 25 THEN '18-25'
-            WHEN DrivAge BETWEEN 26 AND 40 THEN '26-40'
-            WHEN DrivAge BETWEEN 41 AND 60 THEN '41-60'
-            WHEN DrivAge >= 61 THEN '61+'
-            ELSE 'Other / missing'
-        END AS age_group,
-        CASE
-            WHEN BonusMalus <= 50 THEN '<=50'
-            WHEN BonusMalus <= 75 THEN '51-75'
-            WHEN BonusMalus <= 100 THEN '76-100'
-            WHEN BonusMalus <= 125 THEN '101-125'
-            WHEN BonusMalus > 125 THEN '>125'
-            ELSE 'Other / missing'
-        END AS bm_group
-    FROM policies
-),
-policy_metrics AS (
-    SELECT
-        age_group,
-        bm_group,
-        COUNT(*) AS policy_count,
-        SUM(Exposure) AS total_exposure,
-        SUM(ClaimNb) AS total_claim_count
-    FROM classified_policies
-    GROUP BY age_group, bm_group
+        age_group, age_order, bm_group, bm_order,
+        COUNT(*)      AS policy_count,
+        SUM(Exposure) AS policy_years,
+        SUM(ClaimNb)  AS claim_count
+    FROM v_policies_rated
+    GROUP BY age_group, age_order, bm_group, bm_order
 ),
 claim_metrics AS (
     SELECT
-        p.age_group,
-        p.bm_group,
-        COUNT(*) AS claim_record_count,
-        SUM(c.ClaimAmount) AS total_claim_amount
-    FROM claims c
-    INNER JOIN classified_policies p
-        ON c.IDpol = p.IDpol
-    GROUP BY p.age_group, p.bm_group
+        age_group, bm_group,
+        SUM(ClaimAmount) AS claim_amount
+    FROM v_claims_rated
+    GROUP BY age_group, bm_group
 )
 SELECT
     p.age_group,
     p.bm_group,
     p.policy_count,
-    p.total_exposure,
-    p.total_claim_count,
-    p.total_claim_count * 1.0 / p.total_exposure
-        AS claim_frequency,
-    c.claim_record_count,
-    c.total_claim_amount,
-    c.total_claim_amount / c.claim_record_count
-        AS avg_claim_amount,
-    c.claim_record_count * 1.0 / p.total_exposure
-        AS severity_record_frequency,
-    c.total_claim_amount / p.total_exposure
-        AS observed_pure_premium
-FROM policy_metrics p
-INNER JOIN claim_metrics c
-    ON p.age_group = c.age_group
-    AND p.bm_group = c.bm_group
-ORDER BY
-    CASE p.age_group
-        WHEN '18-25' THEN 1
-        WHEN '26-40' THEN 2
-        WHEN '41-60' THEN 3
-        WHEN '61+' THEN 4
-        ELSE 5
-    END,
-    CASE p.bm_group
-        WHEN '<=50' THEN 1
-        WHEN '51-75' THEN 2
-        WHEN '76-100' THEN 3
-        WHEN '101-125' THEN 4
-        WHEN '>125' THEN 5
-        ELSE 6
-    END;
-
-/*
-Remark:
-The segmentation reveals an exceptional behaviour of the
-pure premium amounts. This wasn't completly visible in
-the seperate observations of age group and BM-Groups. 
-
-In particular there are three special combinations, where one 
-has to be cautious for further interpretations:
-
-
-1. age '18-25' + bm '76-100' --> 6363 claim amount with 1730 claims
-is a relatively big group. The deviation of this group in comparison 
-to the other segmentations is too high to be left unnoticed. A reason 
-for this amount isn't clear at the moment.
-
-
-2. the age group '26-40' has no monotonicity in the avg. claim amount, which
-means that bm doesn't influence the avg. claim amount in this age group.
-
-
-3. age groups '41-60' and '61+' show the same effect described in 2., so 
-that we can't see a bm influence for the avg. claim amount either. 
-*/
-
-------------------------------------------------------------------------
-
-
-
-------------------------------------------------------------------------
--- 4 Further analysis of risk segments ... (in progress)
-------------------------------------------------------------------------
-
--- Rank combined age and bonus-malus segments by observed pure premium.
--- RANK() assigns a ranking based on the observed claim cost per exposure unit.
--- Policy and claim data are aggregated separately to prevent join duplication.
-
-WITH classified_policies AS (
-    SELECT
-        IDpol,
-        Exposure,
-        CASE
-            WHEN DrivAge BETWEEN 18 AND 25 THEN '18-25'
-            WHEN DrivAge BETWEEN 26 AND 40 THEN '26-40'
-            WHEN DrivAge BETWEEN 41 AND 60 THEN '41-60'
-            WHEN DrivAge >= 61 THEN '61+'
-            ELSE 'Other / missing'
-        END AS age_group,
-        CASE
-            WHEN BonusMalus <= 50 THEN '<=50'
-            WHEN BonusMalus <= 75 THEN '51-75'
-            WHEN BonusMalus <= 100 THEN '76-100'
-            WHEN BonusMalus <= 125 THEN '101-125'
-            WHEN BonusMalus > 125 THEN '>125'
-            ELSE 'Other / missing'
-        END AS bm_group
-    FROM policies
-),
-policy_metrics AS (
-    SELECT
-        age_group,
-        bm_group,
-        COUNT(*) AS policy_count,
-        SUM(Exposure) AS total_exposure
-    FROM classified_policies
-    GROUP BY age_group, bm_group
-),
-claim_metrics AS (
-    SELECT
-        p.age_group,
-        p.bm_group,
-        COUNT(*) AS claim_record_count,
-        SUM(c.ClaimAmount) AS total_claim_amount
-    FROM claims c
-    INNER JOIN classified_policies p
-        ON c.IDpol = p.IDpol
-    GROUP BY p.age_group, p.bm_group
-),
-pure_premium_metrics AS (
-    SELECT
-        p.age_group,
-        p.bm_group,
-        p.policy_count,
-        p.total_exposure,
-        c.claim_record_count,
-        c.total_claim_amount,
-        c.total_claim_amount / p.total_exposure
-            AS observed_pure_premium
-    FROM policy_metrics p
-    INNER JOIN claim_metrics c
-        ON p.age_group = c.age_group
-        AND p.bm_group = c.bm_group
-)
-SELECT
-    age_group,
-    bm_group,
-    policy_count,
-    claim_record_count,
-    observed_pure_premium,
-    RANK() OVER (
-        ORDER BY observed_pure_premium DESC
-    ) AS premium_rank
-FROM pure_premium_metrics
-ORDER BY premium_rank;
-
-
-
-
-------------------------------------------------------------------------
--- Compare policy and claim record counts across age and bonus-malus segments.
--- The results help identify small segments that may produce unstable average claim amounts.
-
-WITH classified_policies AS (
-    SELECT
-        IDpol,
-        Exposure,
-        CASE
-            WHEN DrivAge BETWEEN 18 AND 25 THEN '18-25'
-            WHEN DrivAge BETWEEN 26 AND 40 THEN '26-40'
-            WHEN DrivAge BETWEEN 41 AND 60 THEN '41-60'
-            WHEN DrivAge >= 61 THEN '61+'
-            ELSE 'Other / missing'
-        END AS age_group,
-        CASE
-            WHEN BonusMalus <= 50 THEN '<=50'
-            WHEN BonusMalus <= 75 THEN '51-75'
-            WHEN BonusMalus <= 100 THEN '76-100'
-            WHEN BonusMalus <= 125 THEN '101-125'
-            WHEN BonusMalus > 125 THEN '>125'
-            ELSE 'Other / missing'
-        END AS bm_group
-    FROM policies
-),
-policy_metrics AS (
-    SELECT
-        age_group,
-        bm_group,
-        COUNT(*) AS policy_count,
-        SUM(Exposure) AS total_exposure
-    FROM classified_policies
-    GROUP BY age_group, bm_group
-),
-claim_metrics AS (
-    SELECT
-        p.age_group,
-        p.bm_group,
-        COUNT(*) AS claim_record_count,
-        AVG(c.ClaimAmount) AS avg_claim_amount
-    FROM claims c
-    INNER JOIN classified_policies p
-        ON c.IDpol = p.IDpol
-    GROUP BY p.age_group, p.bm_group
-)
-SELECT
-    p.age_group,
-    p.bm_group,
-    p.policy_count,
-    ROUND(p.total_exposure, 2) AS total_exposure,
-    COALESCE(c.claim_record_count, 0) AS claim_record_count,
-    ROUND(c.avg_claim_amount, 2) AS avg_claim_amount
+    ROUND(p.policy_years, 0)                                 AS policy_years,
+    p.claim_count,
+    ROUND(COALESCE(c.claim_amount, 0) / p.policy_years, 0)   AS observed_pure_premium,
+    ROUND(MIN(1.0, SQRT(p.claim_count / 1082.0)), 2)         AS credibility_z,
+    CASE
+        WHEN p.claim_count >= 1082 THEN 'full'
+        WHEN p.claim_count >= 300  THEN 'partial'
+        ELSE 'low'
+    END                                                      AS reliability
 FROM policy_metrics p
 LEFT JOIN claim_metrics c
-    ON p.age_group = c.age_group
-    AND p.bm_group = c.bm_group
-ORDER BY
-    CASE p.age_group
-        WHEN '18-25' THEN 1
-        WHEN '26-40' THEN 2
-        WHEN '41-60' THEN 3
-        WHEN '61+' THEN 4
-        ELSE 5
-    END,
-    CASE p.bm_group
-        WHEN '<=50' THEN 1
-        WHEN '51-75' THEN 2
-        WHEN '76-100' THEN 3
-        WHEN '101-125' THEN 4
-        WHEN '>125' THEN 5
-        ELSE 6
-    END;
+    ON c.age_group = p.age_group
+   AND c.bm_group  = p.bm_group
+ORDER BY p.age_order, p.bm_order;
 
+/*
+Results (selection):
+  cell                 policies  claims  observed PP     Z    reliability
+  26-40 / <=50           68,506   1,694         78    1.00   full
+  41-60 / <=50          223,526   7,092        101    1.00   full
+  18-25 / 81-100         23,769   1,492      1,151    1.00   full
+  18-25 / >125              279      56      2,898    0.23   low
+  61+   / >125               72      25      1,154    0.15   low
+  -> 9 of 24 cells have full credibility, 9 have fewer than 300 claims.
 
+Interpretation:
+- Even a fully credible cell can be distorted by single large claims:
+  18-25 / 81-100 has enough claims for a reliable FREQUENCY, but its pure
+  premium of 1,151 is dominated by the three claims above 1 million. The
+  credibility standard above is about claim counts, not claim amounts.
+- Cells with low credibility (e.g. 61+ / >125 with 25 claims) should not be
+  priced on their own experience. A GLM solves this by combining the age
+  factor and the Bonus-Malus factor, each estimated from many cells.
+  This is the main reason to use a model instead of the observed table.
+*/
 
-
-------------------------------------------------------------------------
 
