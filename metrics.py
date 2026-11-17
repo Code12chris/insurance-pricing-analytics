@@ -4,9 +4,12 @@ Used by main.py and its modules, validation.py and features.py:
 train/test split, GLM fitting, deviance, Gini, lift tables, plot style
 and console section headers.
 """
+import os
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
 
@@ -109,3 +112,35 @@ def plot_lift(ax, t, title, ylabel):
 def print_section(title):
     """Console header that separates the steps of a run."""
     print(f"\n{'=' * 78}\n{title}\n{'=' * 78}")
+
+
+def pdf_pages(path):
+    """PdfPages without a creation date: the same plots give a byte-identical
+    file, so git only reports a change when a plot really changed."""
+    return PdfPages(path, metadata={"CreationDate": None})
+
+
+FIGURE_DIR = "figures"
+
+
+def save_png(fig, name):
+    """Save a figure for the README as figures/<name>.png."""
+    os.makedirs(FIGURE_DIR, exist_ok=True)
+    path = os.path.join(FIGURE_DIR, f"{name}.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    return path
+
+
+def fit_frequency_agg(data, terms, formula=None):
+    """Poisson GLM with log(Exposure) offset, fitted on aggregated cells.
+
+    With categorical factors only, all policies in a cell share the same
+    expected frequency. Summing ClaimNb and Exposure per cell gives the same
+    likelihood up to a constant -> identical estimates, but much faster
+    (checked: parameter differences < 1e-11 compared with the policy-level fit).
+    """
+    cells = (data.groupby(terms, observed=True)
+             .agg(ClaimNb=("ClaimNb", "sum"), Exposure=("Exposure", "sum")).reset_index())
+    formula = formula or "ClaimNb ~ " + " + ".join(terms)
+    return smf.glm(formula, data=cells, family=sm.families.Poisson(),
+                   offset=np.log(cells["Exposure"])).fit()

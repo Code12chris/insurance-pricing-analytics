@@ -14,7 +14,6 @@ Sections
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
 from scipy import stats
@@ -23,7 +22,8 @@ from data_prep import load_clean
 from metrics import (SEED, TEST_SHARE, N_FOLDS, LARGE_LOSS_THRESHOLD, FREQ_FORMULA,
                      SEV_FORMULA, C_MODEL, C_OBS, C_REF, split_by_policy,
                      fit_frequency, fit_severity, poisson_deviance, gamma_deviance,
-                     gini, lift_table, claim_cost_per_policy, plot_lift)
+                     gini, lift_table, claim_cost_per_policy, plot_lift,
+                     pdf_pages, save_png)
 
 # ----------------------------------------------------------------------------
 # 1. data and split
@@ -42,7 +42,7 @@ print(pd.DataFrame({
     "max_claim": [train_c["ClaimAmount"].max(), test_c["ClaimAmount"].max()]},
     index=["train", "test"]).round(4))
 
-pdf = PdfPages("validation_plots.pdf")
+pdf = pdf_pages("validation_plots.pdf")
 
 # ----------------------------------------------------------------------------
 # 2. frequency: out-of-sample deviance, lift, Gini
@@ -283,6 +283,7 @@ ax.set_title("Portfolio error on held-out folds")
 ax.legend(frameon=False)
 fig.tight_layout()
 pdf.savefig(fig)
+save_png(fig, "cv_portfolio_error")
 plt.close(fig)
 
 pdf.close()

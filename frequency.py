@@ -23,12 +23,13 @@ import statsmodels.formula.api as smf
 from metrics import FREQ_FORMULA, print_section
 
 
-def fit_poisson(policies):
-    """Fit the Poisson GLM and print the tariff factors."""
+def fit_poisson(policies, verbose=True):
+    """Fit the Poisson GLM and print the tariff factors (full summary if verbose)."""
     print_section("Claim frequency: Poisson GLM (age group + Bonus-Malus group)")
     model = smf.glm(FREQ_FORMULA, data=policies, family=sm.families.Poisson(),
                     offset=np.log(policies["Exposure"])).fit()
-    print(model.summary())
+    if verbose:
+        print(model.summary())
 
     factors = pd.DataFrame({"coefficient": model.params,
                             "factor": np.exp(model.params),

@@ -1,7 +1,7 @@
 """Insurance Pricing Analytics: base tariff for French motor liability (freMTPL2).
 
 Run:  python main.py
-Output: console tables, analyse_plots.pdf, pure_premium_heatmap.png,
+Output: console tables, analyse_plots.pdf, figures/pure_premium_heatmap.png,
         insurance.db (raw tables for policies_analysis.sql)
 
 Workflow (one module per step):
@@ -19,11 +19,10 @@ Further steps in separate scripts:
 import matplotlib
 
 matplotlib.use("Agg")                     # write plots to file, no windows
-from matplotlib.backends.backend_pdf import PdfPages
 
 from data_prep import (load_raw, write_sqlite, consistency_report, clean,
                        add_tariff_groups)
-from metrics import print_section
+from metrics import print_section, pdf_pages
 import eda
 import frequency
 import severity
@@ -40,7 +39,7 @@ def main():
     # claims with the rating factors of their policy (every claim has a policy)
     claims_rated = claims.merge(policies[["IDpol", "age_group", "bm_group"]], on="IDpol")
 
-    with PdfPages("analyse_plots.pdf") as pdf:
+    with pdf_pages("analyse_plots.pdf") as pdf:
         # 2. exploratory analysis ---------------------------------------------
         portfolio_frequency = eda.frequency_overview(policies, pdf)
         eda.frequency_one_way(policies, portfolio_frequency)
@@ -60,7 +59,7 @@ def main():
         cells = pricing.tariff_table(policies, poisson_model, gamma_model, pdf)
         pricing.validate_tariff(cells, policies, claims)
 
-    print("\nanalyse_plots.pdf and pure_premium_heatmap.png written")
+    print("\nanalyse_plots.pdf and figures/pure_premium_heatmap.png written")
 
 
 if __name__ == "__main__":
