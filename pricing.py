@@ -11,10 +11,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from metrics import C_MODEL, print_section
+from metrics import C_MODEL, print_section, save_png
 
 
-def tariff_table(policies, poisson_model, gamma_model, pdf, png_path="pure_premium_heatmap.png"):
+def tariff_table(policies, poisson_model, gamma_model, pdf):
     """Predict frequency, severity and pure premium for every tariff cell."""
     print_section("Tariff: pure premium per tariff cell")
     cells = policies.groupby(["age_group", "bm_group"], observed=True).agg(
@@ -32,7 +32,7 @@ def tariff_table(policies, poisson_model, gamma_model, pdf, png_path="pure_premi
     ax.set_xlabel("Bonus-Malus group")
     ax.set_ylabel("age group")
     fig.tight_layout()
-    fig.savefig(png_path, dpi=200, bbox_inches="tight")
+    save_png(fig, "pure_premium_heatmap")
     pdf.savefig(fig)
     plt.close(fig)
 

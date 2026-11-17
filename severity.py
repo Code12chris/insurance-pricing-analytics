@@ -26,12 +26,13 @@ from metrics import SEV_FORMULA, C_MODEL, C_REF, print_section
 LABELS = {"age_group": "age group", "bm_group": "Bonus-Malus group"}
 
 
-def fit_gamma(severity, pdf):
+def fit_gamma(severity, pdf, verbose=True):
     """Gamma GLM, factor table, comparison per tariff cell and residual plots."""
     print_section("Claim severity: Gamma GLM (log link)")
     model = smf.glm(SEV_FORMULA, data=severity,
                     family=sm.families.Gamma(link=sm.families.links.Log())).fit()
-    print(model.summary())
+    if verbose:
+        print(model.summary())
 
     factors = pd.DataFrame({"factor": np.exp(model.params), "p_value": model.pvalues})
     print("\nseverity factors (reference: age 18-25, Bonus-Malus <=50):")
@@ -75,12 +76,13 @@ def fit_gamma(severity, pdf):
     return model
 
 
-def fit_lognormal(severity, pdf):
+def fit_lognormal(severity, pdf, verbose=True):
     """Linear model on log(claim amount) with diagnostic plots."""
     print_section("Claim severity: lognormal model (OLS on log claim amount)")
     data = severity.assign(log_claim=np.log(severity["ClaimAmount"]))
     model = smf.ols(SEV_FORMULA.replace("ClaimAmount", "log_claim"), data=data).fit()
-    print(model.summary())
+    if verbose:
+        print(model.summary())
 
     ci = np.exp(model.conf_int())
     print("\nfactors on the median claim amount with 95% confidence interval:")

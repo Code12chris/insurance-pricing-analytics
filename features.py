@@ -18,7 +18,6 @@ uses cross-validation inside the training data; the test set only reports.
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
 import seaborn as sns
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
@@ -27,7 +26,8 @@ from scipy.special import gammaln
 from data_prep import load_clean, add_rating_features, group_small_regions, small_levels
 from metrics import (SEED, N_FOLDS, LARGE_LOSS_THRESHOLD, C_MODEL, C_OBS, C_REF,
                      split_by_policy, poisson_deviance, gamma_deviance, gini,
-                     lift_table, plot_lift)
+                     lift_table, plot_lift, pdf_pages, save_png)
+from metrics import fit_frequency_agg as metrics_fit_frequency_agg
 
 # A feature is added only if it lowers the cross-validated deviance by at least 0.1%
 # on average AND lowers it in every single fold (stability criterion).
@@ -69,17 +69,8 @@ def formula(response, terms):
 
 
 def fit_frequency_agg(data, terms):
-    """Poisson GLM fitted on aggregated cells.
-
-    With categorical factors only, all policies in a cell share the same expected
-    frequency. Summing ClaimNb and Exposure per cell gives the same likelihood up to
-    a constant -> identical estimates, but much faster (checked: parameter
-    differences < 1e-11 compared with the policy-level fit).
-    """
-    cells = (data.groupby(terms, observed=True)
-             .agg(ClaimNb=("ClaimNb", "sum"), Exposure=("Exposure", "sum")).reset_index())
-    return smf.glm(formula("ClaimNb", terms), data=cells, family=sm.families.Poisson(),
-                   offset=np.log(cells["Exposure"])).fit()
+    """Aggregated Poisson fit (see metrics.fit_frequency_agg) with this file's terms."""
+    return metrics_fit_frequency_agg(data, terms, formula("ClaimNb", terms))
 
 
 def fit_severity_terms(claims, terms, response="capped"):
@@ -174,7 +165,7 @@ fold = np.random.default_rng(SEED + 1).integers(0, N_FOLDS, len(train))
 fold_of_policy = pd.Series(fold, index=train["IDpol"].to_numpy())
 fold_c = train_c["IDpol"].map(fold_of_policy).to_numpy()
 
-pdf = PdfPages("features_plots.pdf")
+pdf = pdf_pages("features_plots.pdf")
 
 # ----------------------------------------------------------------------------
 # 2. frequency: forward selection by cross-validation on training data
@@ -227,6 +218,7 @@ for ax, (name, t) in zip(axes, lifts.items()):
     plot_lift(ax, t, f"Frequency lift, {name} (test set)", "claims per policy year")
 fig.tight_layout()
 pdf.savefig(fig)
+save_png(fig, "lift_base_vs_extended")
 plt.close(fig)
 
 # ----------------------------------------------------------------------------
