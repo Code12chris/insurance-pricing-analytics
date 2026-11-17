@@ -3,6 +3,7 @@
 Same cleaning rules as the data-consistency section in main.py:
 claim counts (ClaimNb) and claim amounts must describe the same claims.
 """
+import numpy as np
 import pandas as pd
 
 AGE_BINS = [17, 25, 40, 60, 100]
@@ -56,6 +57,53 @@ def add_tariff_groups(policies):
     policies["age_group"] = pd.cut(policies["DrivAge"], AGE_BINS, labels=AGE_LABELS)
     policies["bm_group"] = pd.cut(policies["BonusMalus"], BM_BINS, labels=BM_LABELS)
     return policies
+
+
+# --- additional rating factors (features.py) ------------------------------
+# Bands are chosen from one-way claim frequencies on the training data:
+# boundaries where the frequency changes, enough exposure per band.
+
+DRIVAGE_BINS = [17, 20, 22, 25, 30, 40, 50, 60, 70, 100]
+DRIVAGE_LABELS = ["18-20", "21-22", "23-25", "26-30", "31-40",
+                  "41-50", "51-60", "61-70", "71+"]
+VEHAGE_BINS = [-1, 4, 10, 15, 100]           # flat up to 10 years, falls after 15
+VEHAGE_LABELS = ["0-4", "5-10", "11-15", "16+"]
+VEHPOWER_BINS = [3, 4, 6, 8, 11, 100]        # power 4 lowest, 12+ sparse
+VEHPOWER_LABELS = ["4", "5-6", "7-8", "9-11", "12+"]
+# Density spans 1 to 27,000 inhabitants/km2 -> bands on the log scale,
+# one band per unit of log(Density); the two lowest units are merged (0.5% exposure).
+DENSITY_LOG_BINS = [-np.inf, 3, 4, 5, 6, 7, 8, 9, np.inf]
+DENSITY_LABELS = ["<20", "20-55", "55-150", "150-400",
+                  "400-1100", "1100-3000", "3000-8100", ">8100"]
+
+
+def add_rating_features(policies):
+    """Add banded versions of the remaining rating factors.
+
+    Area is not banded again: it is itself a banding of log(Density)
+    (non-overlapping ranges per class), so only one of the two may enter a model.
+    """
+    policies = policies.copy()
+    policies["drivage_band"] = pd.cut(policies["DrivAge"], DRIVAGE_BINS, labels=DRIVAGE_LABELS)
+    policies["vehage_band"] = pd.cut(policies["VehAge"], VEHAGE_BINS, labels=VEHAGE_LABELS)
+    policies["vehpower_band"] = pd.cut(policies["VehPower"], VEHPOWER_BINS, labels=VEHPOWER_LABELS)
+    policies["density_band"] = pd.cut(np.log(policies["Density"]), DENSITY_LOG_BINS,
+                                      labels=DENSITY_LABELS)
+    return policies
+
+
+def group_small_regions(policies, small_regions):
+    """Merge sparsely populated regions into 'Other' (list decided on training data)."""
+    policies = policies.copy()
+    policies["region_grp"] = policies["Region"].where(
+        ~policies["Region"].isin(small_regions), "Other")
+    return policies
+
+
+def small_levels(policies, column, min_exposure_share=0.01):
+    """Levels of `column` with less than `min_exposure_share` of total exposure."""
+    share = policies.groupby(column)["Exposure"].sum() / policies["Exposure"].sum()
+    return sorted(share[share < min_exposure_share].index)
 
 
 def load_clean(data_dir="data", verbose=True):
