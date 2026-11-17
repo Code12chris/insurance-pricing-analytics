@@ -1,7 +1,8 @@
-"""Shared settings and helper functions for model validation.
+"""Shared settings and helper functions.
 
-Used by validation.py (base model) and features.py (extended model):
-train/test split, GLM fitting, deviance, Gini, lift tables and plot style.
+Used by main.py and its modules, validation.py and features.py:
+train/test split, GLM fitting, deviance, Gini, lift tables, plot style
+and console section headers.
 """
 import numpy as np
 import pandas as pd
@@ -18,6 +19,8 @@ SEV_FORMULA = "ClaimAmount ~ age_group + bm_group"
 
 # plot colours (validated categorical palette: blue = model, orange = observed)
 C_MODEL, C_OBS, C_REF = "#2a78d6", "#eb6834", "#8a8984"
+# fixed categorical order for charts with more than two series
+CATEGORICAL = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]
 pd.set_option("display.width", 160)
 pd.set_option("display.max_columns", 12)
 plt.rcParams.update({"axes.spines.top": False, "axes.spines.right": False,
@@ -101,3 +104,8 @@ def plot_lift(ax, t, title, ylabel):
     ax.set_title(title)
     ax.legend(frameon=False)
 
+
+
+def print_section(title):
+    """Console header that separates the steps of a run."""
+    print(f"\n{'=' * 78}\n{title}\n{'=' * 78}")
