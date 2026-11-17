@@ -1,0 +1,7 @@
+# Tested with Python 3.13 and the versions listed in README.md ("How to Run")
+pandas>=3.0
+numpy>=2.0
+statsmodels>=0.14
+scipy>=1.11
+matplotlib>=3.8
+seaborn>=0.13
